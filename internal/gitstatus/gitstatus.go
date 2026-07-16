@@ -34,8 +34,9 @@ func Get(dir string) FileStatuses {
 		return nil
 	}
 
-	// Get porcelain status
-	cmd = exec.Command("git", "status", "--porcelain", "-unormal")
+	// Get porcelain status. core.quotepath=false keeps non-ASCII paths
+	// (e.g. umlauts) unquoted so they match the paths reported by the file tree.
+	cmd = exec.Command("git", "-c", "core.quotepath=false", "status", "--porcelain", "-unormal")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

@@ -1,8 +1,6 @@
 package filetree
 
 import (
-	"bufio"
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,8 +51,11 @@ func Walk(root string) ([]*Entry, error) {
 }
 
 // gitLsFiles returns all tracked and untracked-but-not-ignored files using git.
+// The -z flag emits NUL-separated, unquoted paths, so filenames containing
+// non-ASCII (e.g. umlauts) or other special characters are returned verbatim
+// instead of git's default C-style quoted form.
 func gitLsFiles(root string) ([]string, error) {
-	cmd := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard")
+	cmd := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
@@ -62,17 +63,11 @@ func gitLsFiles(root string) ([]string, error) {
 	}
 
 	var files []string
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	for scanner.Scan() {
-		path := scanner.Text()
+	for _, path := range strings.Split(string(out), "\x00") {
 		if path == "" || path == "REVIEW.md" {
 			continue
 		}
-		// Skip hidden files
-		if strings.HasPrefix(filepath.Base(path), ".") {
-			continue
-		}
-		// Skip hidden directories anywhere in path
+		// Skip hidden files or directories anywhere in the path
 		skip := false
 		for _, part := range strings.Split(path, "/") {
 			if strings.HasPrefix(part, ".") {
@@ -90,7 +85,7 @@ func gitLsFiles(root string) ([]string, error) {
 		}
 		files = append(files, path)
 	}
-	return files, scanner.Err()
+	return files, nil
 }
 
 type dirNode struct {

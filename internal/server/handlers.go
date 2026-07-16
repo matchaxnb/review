@@ -45,12 +45,12 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prevent path traversal
-	if strings.Contains(path, "..") {
+	absPath, ok := h.resolvePath(path)
+	if !ok {
 		jsonError(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 
-	absPath := filepath.Join(h.rootDir, path)
 	content, err := os.ReadFile(absPath)
 	if err != nil {
 		jsonError(w, "file not found", http.StatusNotFound)
@@ -122,7 +122,7 @@ func (h *handlers) handleSetAnnotation(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "path and line (>= 1) are required", http.StatusBadRequest)
 		return
 	}
-	if strings.Contains(req.Path, "..") {
+	if _, ok := h.resolvePath(req.Path); !ok {
 		jsonError(w, "invalid path", http.StatusBadRequest)
 		return
 	}
@@ -188,6 +188,20 @@ func (h *handlers) handleDeleteReview(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) handleChromaCSS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/css")
 	w.Write([]byte(highlight.CSS()))
+}
+
+// resolvePath joins a client-supplied relative path against the review root and
+// verifies the result stays within it. It returns the cleaned absolute path and
+// true when safe. Unlike a naive ".." substring check, this accepts legitimate
+// filenames that merely contain ".." (such as "[...slug].astro") while still
+// rejecting traversal attempts that escape the root.
+func (h *handlers) resolvePath(path string) (string, bool) {
+	absPath := filepath.Join(h.rootDir, path)
+	rel, err := filepath.Rel(h.rootDir, absPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return absPath, true
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}) {
