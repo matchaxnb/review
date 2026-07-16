@@ -9,9 +9,28 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 )
 
-// CSS returns the Chroma CSS classes for the GitHub style.
+// CSS returns the Chroma CSS classes for syntax highlighting.
+//
+// The light and dark GitHub palettes are each scoped to a prefers-color-scheme
+// media query so exactly one is active at a time. This mirrors the page's
+// automatic dark mode and prevents light-theme token colors (which set explicit
+// dark text colors) from leaking onto the dark background, where tokens that the
+// dark theme leaves at its base color would otherwise stay unreadable.
 func CSS() string {
-	style := styles.Get("github")
+	var buf bytes.Buffer
+	buf.WriteString("@media (prefers-color-scheme: light) {\n")
+	buf.WriteString(styleCSS("github"))
+	buf.WriteString("\n}\n")
+	buf.WriteString("@media (prefers-color-scheme: dark) {\n")
+	buf.WriteString(styleCSS("github-dark"))
+	buf.WriteString("\n}\n")
+	return buf.String()
+}
+
+// styleCSS returns the class-based Chroma CSS for the named style, falling back
+// to the built-in default when the style is unknown.
+func styleCSS(name string) string {
+	style := styles.Get(name)
 	if style == nil {
 		style = styles.Fallback
 	}
