@@ -427,7 +427,6 @@
             const gutter = lineEl.querySelector('.lnt, .ln');
             if (gutter) {
               gutter.addEventListener('mouseenter', (e) => showDiffTooltip(e, hunk));
-              gutter.addEventListener('mouseleave', hideDiffTooltip);
             }
           }
         }
@@ -459,7 +458,6 @@
       const hunk = del.hunkIndex >= 0 ? state.diffHunks[del.hunkIndex] : null;
       if (hunk) {
         gutterSpan.addEventListener('mouseenter', (e) => showDiffTooltip(e, hunk));
-        gutterSpan.addEventListener('mouseleave', hideDiffTooltip);
       }
 
       // Insert after the appropriate line
@@ -676,6 +674,7 @@
 
   // Diff tooltip
   let diffTooltip = null;
+  let diffTooltipMoveHandler = null;
 
   function showDiffTooltip(event, hunk) {
     hideDiffTooltip();
@@ -689,21 +688,50 @@
     diffTooltip.innerHTML = '<pre>' + html + '</pre>';
 
     document.body.appendChild(diffTooltip);
-    const rect = event.target.getBoundingClientRect();
-    diffTooltip.style.top = (rect.bottom + 4) + 'px';
-    diffTooltip.style.left = rect.left + 'px';
 
-    // Ensure it doesn't overflow viewport
+    // Position the tooltip so the cursor is already inside it (near the
+    // top-left corner). This lets a tall, scrollable tooltip be reached and
+    // scrolled without the pointer having to leave it first.
+    const margin = 16;
+    const inset = 12;
     const tooltipRect = diffTooltip.getBoundingClientRect();
-    if (tooltipRect.right > window.innerWidth - 16) {
-      diffTooltip.style.left = (window.innerWidth - tooltipRect.width - 16) + 'px';
+    let left = event.clientX - inset;
+    let top = event.clientY - inset;
+
+    // Keep it inside the viewport by shifting (never flipping away from the
+    // cursor, which would move it out from under the pointer).
+    if (left + tooltipRect.width > window.innerWidth - margin) {
+      left = window.innerWidth - margin - tooltipRect.width;
     }
-    if (tooltipRect.bottom > window.innerHeight - 16) {
-      diffTooltip.style.top = (rect.top - tooltipRect.height - 4) + 'px';
+    left = Math.max(margin, Math.min(left, event.clientX));
+    if (top + tooltipRect.height > window.innerHeight - margin) {
+      top = window.innerHeight - margin - tooltipRect.height;
     }
+    top = Math.max(margin, Math.min(top, event.clientY));
+
+    diffTooltip.style.left = left + 'px';
+    diffTooltip.style.top = top + 'px';
+
+    // Hide once the pointer leaves the tooltip. A document-level mousemove
+    // guard is used instead of the gutter's mouseleave: the tooltip now sits
+    // under the cursor (covering the gutter), so relying on the gutter would
+    // hide it immediately and loop.
+    diffTooltipMoveHandler = (e) => {
+      if (!diffTooltip) return;
+      const r = diffTooltip.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right ||
+          e.clientY < r.top || e.clientY > r.bottom) {
+        hideDiffTooltip();
+      }
+    };
+    document.addEventListener('mousemove', diffTooltipMoveHandler);
   }
 
   function hideDiffTooltip() {
+    if (diffTooltipMoveHandler) {
+      document.removeEventListener('mousemove', diffTooltipMoveHandler);
+      diffTooltipMoveHandler = null;
+    }
     if (diffTooltip) {
       diffTooltip.remove();
       diffTooltip = null;
