@@ -1,6 +1,9 @@
 package filetree
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -126,4 +129,97 @@ func TestBuildTreeFromPaths(t *testing.T) {
 			t.Errorf("expected 3 children, got %d", len(tree[0].Children))
 		}
 	})
+}
+
+func TestWalkDirHiddenEntries(t *testing.T) {
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		".env":                     "SECRET=1",
+		".github/workflows/ci.yml": "on: push",
+		".git/config":              "[core]",
+		"node_modules/dep.js":      "module.exports = {}",
+		"main.go":                  "package main",
+	})
+
+	tree, err := walkDir(root, "")
+	if err != nil {
+		t.Fatalf("walkDir failed: %v", err)
+	}
+
+	names := entryPaths(tree)
+	for _, want := range []string{".env", ".github", ".github/workflows/ci.yml", "main.go"} {
+		if !names[want] {
+			t.Errorf("expected %q in tree, got %v", want, names)
+		}
+	}
+	for _, unwanted := range []string{".git", ".git/config", "node_modules"} {
+		if names[unwanted] {
+			t.Errorf("expected %q to be excluded, got %v", unwanted, names)
+		}
+	}
+}
+
+func TestWalkGitRepoHiddenEntries(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		".gitignore":  "ignored.txt\n",
+		".env":        "SECRET=1",
+		"ignored.txt": "nope",
+		"main.go":     "package main",
+	})
+	cmd := exec.Command("git", "init")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("git init failed: %v: %s", err, out)
+	}
+
+	tree, err := Walk(root)
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	names := entryPaths(tree)
+	for _, want := range []string{".gitignore", ".env", "main.go"} {
+		if !names[want] {
+			t.Errorf("expected %q in tree, got %v", want, names)
+		}
+	}
+	for _, unwanted := range []string{".git", "ignored.txt"} {
+		if names[unwanted] {
+			t.Errorf("expected %q to be excluded, got %v", unwanted, names)
+		}
+	}
+}
+
+// writeFiles creates the given files (relative path to content) below root,
+// including any parent directories.
+func writeFiles(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for rel, content := range files {
+		abs := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+}
+
+// entryPaths flattens a tree into a set of all entry paths it contains.
+func entryPaths(entries []*Entry) map[string]bool {
+	paths := make(map[string]bool)
+	var walk func([]*Entry)
+	walk = func(list []*Entry) {
+		for _, e := range list {
+			paths[e.Path] = true
+			walk(e.Children)
+		}
+	}
+	walk(entries)
+	return paths
 }

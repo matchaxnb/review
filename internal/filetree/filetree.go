@@ -16,11 +16,17 @@ type Entry struct {
 	Children []*Entry `json:"children"`
 }
 
+// ignoredDirs are directory names never included in the tree. Version control
+// metadata directories are listed here because their contents are not source
+// code the user would review.
 var ignoredDirs = map[string]bool{
 	"vendor":       true,
 	"node_modules": true,
 	"dist":         true,
 	"build":        true,
+	".git":         true,
+	".svn":         true,
+	".hg":          true,
 }
 
 var ignoredExts = map[string]bool{
@@ -65,17 +71,6 @@ func gitLsFiles(root string) ([]string, error) {
 	var files []string
 	for _, path := range strings.Split(string(out), "\x00") {
 		if path == "" || path == "REVIEW.md" {
-			continue
-		}
-		// Skip hidden files or directories anywhere in the path
-		skip := false
-		for _, part := range strings.Split(path, "/") {
-			if strings.HasPrefix(part, ".") {
-				skip = true
-				break
-			}
-		}
-		if skip {
 			continue
 		}
 		// Skip binary extensions
@@ -166,11 +161,6 @@ func walkDir(absDir, relDir string) ([]*Entry, error) {
 	var result []*Entry
 	for _, e := range entries {
 		name := e.Name()
-
-		// Skip hidden files/dirs
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
 
 		// Skip REVIEW.md
 		if name == "REVIEW.md" {
