@@ -3,9 +3,7 @@ package gitstatus
 import (
 	"bufio"
 	"bytes"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 )
@@ -51,11 +49,12 @@ type DiffHunk struct {
 }
 
 // GetFileDiff returns all diff information for a file. With a base commit set,
-// the file is diffed against that commit instead of against HEAD.
+// the file is diffed against that commit instead of against HEAD. The file's
+// content is used to mark up a file git does not track yet.
 //
 // The diff and the check for an untracked file run at the same time, because
 // which of the two answers is needed only shows once the diff is in.
-func GetFileDiff(dir string, base Base, filePath string) *FileDiffInfo {
+func GetFileDiff(dir string, base Base, filePath string, content []byte) *FileDiffInfo {
 	type result struct {
 		out []byte
 		err error
@@ -82,7 +81,7 @@ func GetFileDiff(dir string, base Base, filePath string) *FileDiffInfo {
 	}
 	if untracked.err == nil && len(untracked.out) > 0 {
 		// The file is new to git, so all of it is new
-		return &FileDiffInfo{Lines: allLinesAdded(dir, filePath)}
+		return &FileDiffInfo{Lines: allLinesAdded(content)}
 	}
 	return &FileDiffInfo{}
 }
@@ -205,14 +204,10 @@ func parseDiff(out []byte) *FileDiffInfo {
 	return info
 }
 
-// allLinesAdded reads the file and marks every line as "added".
-func allLinesAdded(dir, filePath string) map[int]LineChange {
-	data, err := os.ReadFile(filepath.Join(dir, filePath))
-	if err != nil {
-		return nil
-	}
-	n := bytes.Count(data, []byte{'\n'})
-	if len(data) > 0 && data[len(data)-1] != '\n' {
+// allLinesAdded marks every line of the given content as "added".
+func allLinesAdded(content []byte) map[int]LineChange {
+	n := bytes.Count(content, []byte{'\n'})
+	if len(content) > 0 && content[len(content)-1] != '\n' {
 		n++ // file doesn't end with newline
 	}
 	if n == 0 {

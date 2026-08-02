@@ -82,7 +82,7 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hl := highlight.Highlight(path, string(content))
-	diff := gitstatus.GetFileDiff(h.rootDir, h.base, path)
+	diff := gitstatus.GetFileDiff(h.rootDir, h.base, path, content)
 	resp := fileResponse{
 		HTML:          hl.HTML,
 		Language:      hl.Language,

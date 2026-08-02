@@ -258,7 +258,7 @@ func TestGetFileDiff_AgainstGit(t *testing.T) {
 	// two -> TWO (modified), delete four and five, append seven
 	write("code.go", "one\nTWO\nthree\nsix\nseven\n")
 
-	info := GetFileDiff(root, Base{}, "code.go")
+	info := GetFileDiff(root, Base{}, "code.go", nil)
 
 	if got := info.Lines[2]; got != LineModified {
 		t.Errorf("line 2: got %q, want modified", got)
@@ -278,7 +278,7 @@ func TestGetFileDiff_AgainstGit(t *testing.T) {
 
 	// An untracked file counts as entirely new
 	write("fresh.go", "a\nb\nc\n")
-	fresh := GetFileDiff(root, Base{}, "fresh.go")
+	fresh := GetFileDiff(root, Base{}, "fresh.go", []byte("a\nb\nc\n"))
 	if len(fresh.Lines) != 3 {
 		t.Errorf("expected 3 added lines for an untracked file, got %v", fresh.Lines)
 	}
@@ -289,7 +289,7 @@ func TestGetFileDiff_AgainstGit(t *testing.T) {
 	}
 
 	// An unchanged file has nothing to report
-	unchanged := GetFileDiff(root, Base{}, "tracked.txt")
+	unchanged := GetFileDiff(root, Base{}, "tracked.txt", []byte("x\n"))
 	if len(unchanged.Lines) != 0 || len(unchanged.Hunks) != 0 || len(unchanged.Deletions) != 0 {
 		t.Errorf("expected an empty diff, got %+v", unchanged)
 	}
