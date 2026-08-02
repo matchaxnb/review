@@ -109,8 +109,10 @@ func main() {
 
 	handler := server.New(st, rootDir, baseCommit, subFS, hub)
 
-	addr := fmt.Sprintf(":%d", *port)
-	url := fmt.Sprintf("http://localhost:%d", *port)
+	// Bind to the loopback interface only: a review exposes the whole source
+	// tree and has no access control of its own.
+	addr := fmt.Sprintf("127.0.0.1:%d", *port)
+	url := fmt.Sprintf("http://127.0.0.1:%d", *port)
 	fmt.Printf("Code Review running at %s\n", url)
 	fmt.Printf("Reviewing: %s\n", rootDir)
 	if baseCommit.Commit != "" {

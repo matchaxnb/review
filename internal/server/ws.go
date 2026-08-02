@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -21,9 +22,20 @@ const (
 	writeWait = 10 * time.Second
 )
 
+// upgrader accepts connections from the page the server itself serves. Any
+// site a user visits could otherwise open a socket to the local review and
+// read along.
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for local tool
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // not a browser
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return u.Host == r.Host
 	},
 }
 

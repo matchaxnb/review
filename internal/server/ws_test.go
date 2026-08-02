@@ -78,3 +78,37 @@ func TestBroadcastReachesClient(t *testing.T) {
 		t.Errorf("unexpected message: %s", data)
 	}
 }
+
+// TestOriginIsChecked verifies that only the page served by this server may
+// open a socket to it.
+func TestOriginIsChecked(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	srv := httptest.NewServer(http.HandlerFunc(hub.HandleWebSocket))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	cases := map[string]bool{
+		"http://" + host:       true,
+		"https://evil.example": false,
+		"null":                 false,
+	}
+	for origin, allowed := range cases {
+		conn, resp, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": {origin}})
+		if err == nil {
+			conn.Close()
+		}
+		if allowed && err != nil {
+			t.Errorf("origin %q should be accepted, got %v", origin, err)
+		}
+		if !allowed {
+			if err == nil {
+				t.Errorf("origin %q should be rejected", origin)
+			} else if resp != nil && resp.StatusCode != http.StatusForbidden {
+				t.Errorf("origin %q: expected 403, got %d", origin, resp.StatusCode)
+			}
+		}
+	}
+}

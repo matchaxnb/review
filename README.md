@@ -47,7 +47,9 @@ make
 ./review main
 ```
 
-Then open `http://localhost:7070` (or your chosen port) in a browser (should happen automatically).
+Then open `http://127.0.0.1:7070` (or your chosen port) in a browser (should happen automatically).
+
+The server listens on the loopback interface only, so the reviewed sources are not reachable from other machines.
 
 ### Flags
 
