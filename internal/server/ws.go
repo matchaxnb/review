@@ -10,6 +10,17 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	// pongWait is how long a client may stay silent before its connection is
+	// treated as dead.
+	pongWait = 60 * time.Second
+	// pingPeriod is the interval between keepalive pings. It has to leave room
+	// for the reply to arrive before pongWait expires.
+	pingPeriod = 45 * time.Second
+	// writeWait is the time allowed for writing a single message.
+	writeWait = 10 * time.Second
+)
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true // Allow all origins for local tool
@@ -115,12 +126,31 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go client.readPump(h)
 }
 
+// writePump delivers broadcasts to one client and keeps the connection alive
+// by pinging it while there is nothing to send.
 func (c *wsClient) writePump() {
-	defer c.conn.Close()
-	for msg := range c.send {
-		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-			return
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
+
+	for {
+		select {
+		case msg, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				c.conn.WriteMessage(websocket.CloseMessage, nil)
+				return
+			}
+			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -132,10 +162,9 @@ func (c *wsClient) readPump(h *Hub) {
 	}()
 
 	c.conn.SetReadLimit(512)
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
