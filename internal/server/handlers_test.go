@@ -621,6 +621,27 @@ func TestAnnotations_DeleteValidation_EmptyPath(t *testing.T) {
 	}
 }
 
+func TestAnnotations_DeleteValidation_PathTraversal(t *testing.T) {
+	ts, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	body := `{"path":"../../etc/passwd","line":3}`
+	req, err := http.NewRequest("DELETE", ts.URL+"/api/annotations", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
 func TestAnnotations_DeleteNonexistent(t *testing.T) {
 	ts, _, cleanup := setupTestServer(t)
 	defer cleanup()

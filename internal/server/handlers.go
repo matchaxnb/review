@@ -151,6 +151,10 @@ func (h *handlers) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request
 		jsonError(w, "path and line (>= 1) are required", http.StatusBadRequest)
 		return
 	}
+	if _, ok := h.resolvePath(req.Path); !ok {
+		jsonError(w, "invalid path", http.StatusBadRequest)
+		return
+	}
 
 	if err := h.store.Delete(req.Path, req.Line); err != nil {
 		jsonError(w, fmt.Sprintf("failed to delete: %v", err), http.StatusInternalServerError)
