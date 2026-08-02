@@ -70,40 +70,42 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, resp)
 }
 
-// annotationResponse is the JSON shape for a single annotation.
-type annotationResponse struct {
+// AnnotationResponse is the JSON shape of a single annotation.
+type AnnotationResponse struct {
 	Comment  string `json:"comment"`
 	Outdated bool   `json:"outdated"`
+}
+
+// FileAnnotations converts one file's annotations into the shape clients
+// receive, keyed by line number.
+func FileAnnotations(anns map[int]*store.Annotation) map[string]AnnotationResponse {
+	result := make(map[string]AnnotationResponse, len(anns))
+	for line, ann := range anns {
+		result[strconv.Itoa(line)] = AnnotationResponse{
+			Comment:  ann.Comment,
+			Outdated: ann.Outdated,
+		}
+	}
+	return result
+}
+
+// AllAnnotations converts the annotations of every file into the shape clients
+// receive, keyed by file path.
+func AllAnnotations(all map[string]map[int]*store.Annotation) map[string]map[string]AnnotationResponse {
+	result := make(map[string]map[string]AnnotationResponse, len(all))
+	for file, lines := range all {
+		result[file] = FileAnnotations(lines)
+	}
+	return result
 }
 
 func (h *handlers) handleGetAnnotations(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
-		// Return all annotations
-		all := h.store.All()
-		result := make(map[string]map[string]annotationResponse, len(all))
-		for file, lines := range all {
-			fileAnns := make(map[string]annotationResponse, len(lines))
-			for line, ann := range lines {
-				fileAnns[strconv.Itoa(line)] = annotationResponse{
-					Comment:  ann.Comment,
-					Outdated: ann.Outdated,
-				}
-			}
-			result[file] = fileAnns
-		}
-		jsonResponse(w, result)
+		jsonResponse(w, AllAnnotations(h.store.All()))
 		return
 	}
-	fileAnns := h.store.GetFile(path)
-	result := make(map[string]annotationResponse, len(fileAnns))
-	for line, ann := range fileAnns {
-		result[strconv.Itoa(line)] = annotationResponse{
-			Comment:  ann.Comment,
-			Outdated: ann.Outdated,
-		}
-	}
-	jsonResponse(w, result)
+	jsonResponse(w, FileAnnotations(h.store.GetFile(path)))
 }
 
 type annotationRequest struct {
