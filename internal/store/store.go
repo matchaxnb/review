@@ -10,18 +10,18 @@ import (
 // Annotation holds a review comment with its source context.
 type Annotation struct {
 	Comment     string   `json:"comment"`
-	Context     []string `json:"-"`          // stored context lines (without line-number prefix)
-	ContextFrom int      `json:"-"`          // first line number of context block
-	Outdated    bool     `json:"outdated"`   // true if context no longer matches source
+	Context     []string `json:"-"`        // stored context lines (without line-number prefix)
+	ContextFrom int      `json:"-"`        // first line number of context block
+	Outdated    bool     `json:"outdated"` // true if context no longer matches source
 }
 
 // Store holds annotations in memory and persists them to REVIEW.md.
 type Store struct {
-	mdPath    string
-	srcRoot   string
-	data      map[string]map[int]*Annotation
-	mu        sync.RWMutex
-	onChange  []func()
+	mdPath   string
+	srcRoot  string
+	data     map[string]map[int]*Annotation
+	mu       sync.RWMutex
+	onChange []func()
 }
 
 // Load reads the REVIEW.md file (if it exists) and returns a ready Store.

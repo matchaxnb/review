@@ -35,7 +35,7 @@ type fileResponse struct {
 	Language      string                       `json:"language"`
 	DiffLines     map[int]gitstatus.LineChange `json:"diffLines,omitempty"`
 	DiffHunks     []gitstatus.DiffHunk         `json:"diffHunks,omitempty"`
-	DiffDeletions []gitstatus.DiffDeletion      `json:"diffDeletions,omitempty"`
+	DiffDeletions []gitstatus.DiffDeletion     `json:"diffDeletions,omitempty"`
 }
 
 func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {

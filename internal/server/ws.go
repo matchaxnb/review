@@ -18,11 +18,11 @@ var upgrader = websocket.Upgrader{
 
 // Hub maintains the set of active WebSocket clients and broadcasts messages.
 type Hub struct {
-	clients    map[*wsClient]bool
-	mu         sync.RWMutex
-	broadcast  chan []byte
-	done       chan struct{}
-	onMessage  func(msg map[string]interface{}) // optional handler for client messages
+	clients   map[*wsClient]bool
+	mu        sync.RWMutex
+	broadcast chan []byte
+	done      chan struct{}
+	onMessage func(msg map[string]interface{}) // optional handler for client messages
 }
 
 type wsClient struct {

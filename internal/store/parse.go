@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	fileHeaderRe = regexp.MustCompile("^## `(.+)`$")
-	lineHeaderRe = regexp.MustCompile(`^#### Line (\d+)(.*)$`)
+	fileHeaderRe  = regexp.MustCompile("^## `(.+)`$")
+	lineHeaderRe  = regexp.MustCompile(`^#### Line (\d+)(.*)$`)
 	contextLineRe = regexp.MustCompile(`^(\d+): (.*)$`)
 )
 
@@ -36,11 +36,11 @@ func parse(path string) (map[string]map[int]*Annotation, error) {
 	)
 
 	var (
-		st          state
-		currentFile string
-		currentLine int
-		outdated    bool
-		commentBuf  strings.Builder
+		st           state
+		currentFile  string
+		currentLine  int
+		outdated     bool
+		commentBuf   strings.Builder
 		contextLines []string
 		contextFrom  int
 	)

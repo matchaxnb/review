@@ -14,7 +14,7 @@ import (
 
 // Event represents a change detected by the watcher.
 type Event struct {
-	Type string `json:"type"` // "file-changed", "review-deleted", "review-reloaded"
+	Type string `json:"type"`           // "file-changed", "review-deleted", "review-reloaded"
 	Path string `json:"path,omitempty"` // relative path for file events
 }
 
