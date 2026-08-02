@@ -191,7 +191,10 @@ func (h *handlers) handleDeleteReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Reload store (now empty)
-	h.store.Reload()
+	if err := h.store.Reload(); err != nil {
+		jsonError(w, fmt.Sprintf("failed to reload: %v", err), http.StatusInternalServerError)
+		return
+	}
 	jsonResponse(w, map[string]string{"status": "ok"})
 }
 
