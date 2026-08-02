@@ -138,14 +138,23 @@ func TestCheckDrift_NoContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Annotation without context should be skipped
+	// An annotation without context adopts the current source as reference
 	st.data["test.go"] = map[int]*Annotation{
 		1: {Comment: "no context"},
 	}
 
-	changed := st.CheckDrift("test.go")
-	if changed {
-		t.Error("expected no change for annotation without context")
+	if changed := st.CheckDrift("test.go"); !changed {
+		t.Error("expected the annotation to adopt the current source")
+	}
+	ann := st.data["test.go"][1]
+	if ann.ContextFrom != 1 {
+		t.Errorf("expected ContextFrom=1, got %d", ann.ContextFrom)
+	}
+	if len(ann.Context) != 2 {
+		t.Errorf("expected 2 context lines, got %d", len(ann.Context))
+	}
+	if ann.Outdated {
+		t.Error("expected the annotation to not be outdated")
 	}
 }
 
@@ -219,4 +228,45 @@ func keys(m map[int]*Annotation) []int {
 		ks = append(ks, k)
 	}
 	return ks
+}
+
+// TestCheckDrift_OutdatedSurvivesReload guards against the stored context
+// being replaced by the code that took the annotated line's place, which would
+// make the outdated mark disappear on the next read.
+func TestCheckDrift_OutdatedSurvivesReload(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcFile := filepath.Join(tmpDir, "test.go")
+	os.WriteFile(srcFile, []byte("l1\nl2\nl3\nTARGET\nl5\nl6\nl7\n"), 0644)
+
+	mdPath := filepath.Join(tmpDir, "REVIEW.md")
+	st, err := Load(mdPath, tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set("test.go", 4, "look at this"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The annotated code is replaced by something else entirely
+	os.WriteFile(srcFile, []byte("l1\nl2\nl3\nREPLACED\nl5\nl6\nl7\n"), 0644)
+	if !st.CheckDrift("test.go") {
+		t.Fatal("expected drift to be detected")
+	}
+	if !st.data["test.go"][4].Outdated {
+		t.Fatal("expected the annotation to be marked outdated")
+	}
+
+	// Reading the review back must not silently clear the mark
+	reloaded, err := Load(mdPath, tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded.CheckAllDrift()
+	ann := reloaded.data["test.go"][4]
+	if ann == nil {
+		t.Fatal("expected annotation on line 4")
+	}
+	if !ann.Outdated {
+		t.Error("outdated mark was lost across a reload")
+	}
 }

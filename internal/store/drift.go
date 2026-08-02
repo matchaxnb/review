@@ -51,7 +51,12 @@ func (s *Store) CheckDrift(filePath string) bool {
 
 	for lineNum, ann := range annotations {
 		if len(ann.Context) == 0 {
-			// No stored context to compare — skip
+			// Nothing recorded to compare against, as in files written before
+			// the context was stored: adopt the current source as reference.
+			if ctx, from := contextAround(fileLines, lineNum, ContextRadius); len(ctx) > 0 {
+				ann.Context, ann.ContextFrom = ctx, from
+				changed = true
+			}
 			continue
 		}
 

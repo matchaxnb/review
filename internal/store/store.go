@@ -7,6 +7,10 @@ import (
 	"sync"
 )
 
+// ContextRadius is the number of source lines kept above and below an
+// annotated line to recognise the code again after it moved.
+const ContextRadius = 3
+
 // Annotation holds a review comment with its source context.
 type Annotation struct {
 	Comment     string   `json:"comment"`
@@ -60,14 +64,20 @@ func (s *Store) notifyChange() {
 	}
 }
 
-// Set adds or updates a comment on a specific file and line.
+// Set adds or updates a comment on a specific file and line. The surrounding
+// source lines are recorded with it so the annotation can be followed when the
+// code later moves.
 func (s *Store) Set(file string, line int, comment string) error {
 	s.mu.Lock()
 
 	if s.data[file] == nil {
 		s.data[file] = make(map[int]*Annotation)
 	}
-	s.data[file][line] = &Annotation{Comment: comment}
+	ann := &Annotation{Comment: comment}
+	if lines, err := readFileLines(s.srcRoot, file); err == nil {
+		ann.Context, ann.ContextFrom = contextAround(lines, line, ContextRadius)
+	}
+	s.data[file][line] = ann
 	err := s.flush()
 	s.mu.Unlock()
 
@@ -174,7 +184,7 @@ func (s *Store) Flush() error {
 
 // flush serialises the map and atomically writes REVIEW.md.
 func (s *Store) flush() error {
-	content := serialize(s.data, s.srcRoot)
+	content := serialize(s.data)
 	tmp := s.mdPath + ".tmp"
 
 	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {

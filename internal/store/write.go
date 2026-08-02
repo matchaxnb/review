@@ -12,8 +12,10 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 )
 
-// serialize converts the annotation map to a markdown string.
-func serialize(data map[string]map[int]*Annotation, srcRoot string) string {
+// serialize converts the annotation map to a markdown string. The context
+// blocks are written from the context stored with each annotation, which is
+// the code as it looked when the annotation was last in sync with the source.
+func serialize(data map[string]map[int]*Annotation) string {
 	var b strings.Builder
 
 	b.WriteString("# Code Review\n\n")
@@ -54,12 +56,10 @@ func serialize(data map[string]map[int]*Annotation, srcRoot string) string {
 			b.WriteString(ann.Comment)
 			b.WriteString("\n")
 
-			// Try to read context lines from source
-			snippet := readContext(srcRoot, filePath, lineNum, 3)
-			if snippet != "" {
+			if len(ann.Context) > 0 {
 				lang := detectLang(filePath)
 				b.WriteString(fmt.Sprintf("\n```%s\n", lang))
-				b.WriteString(snippet)
+				b.WriteString(formatContext(ann.Context, ann.ContextFrom))
 				b.WriteString("```\n")
 			}
 		}
@@ -68,36 +68,31 @@ func serialize(data map[string]map[int]*Annotation, srcRoot string) string {
 	return b.String()
 }
 
-// readContext reads ±context lines around lineNum from the source file.
-func readContext(srcRoot, relPath string, lineNum, context int) string {
-	absPath := filepath.Join(srcRoot, relPath)
-	f, err := os.Open(absPath)
-	if err != nil {
-		return ""
+// formatContext renders stored context lines with their line numbers, the form
+// they take inside the fenced context block.
+func formatContext(lines []string, from int) string {
+	var b strings.Builder
+	for i, line := range lines {
+		fmt.Fprintf(&b, "%d: %s\n", from+i, line)
 	}
-	defer f.Close()
+	return b.String()
+}
 
-	start := lineNum - context
+// contextAround returns the lines surrounding lineNum together with the line
+// number the block starts at. Line numbers are 1-based.
+func contextAround(lines []string, lineNum, radius int) ([]string, int) {
+	if lineNum < 1 || lineNum > len(lines) {
+		return nil, 0
+	}
+	start := lineNum - radius
 	if start < 1 {
 		start = 1
 	}
-	end := lineNum + context
-
-	scanner := bufio.NewScanner(f)
-	var b strings.Builder
-	current := 0
-	for scanner.Scan() {
-		current++
-		if current < start {
-			continue
-		}
-		if current > end {
-			break
-		}
-		b.WriteString(fmt.Sprintf("%d: %s\n", current, scanner.Text()))
+	end := lineNum + radius
+	if end > len(lines) {
+		end = len(lines)
 	}
-
-	return b.String()
+	return append([]string(nil), lines[start-1:end]...), start
 }
 
 // readFileLines reads all lines from a source file and returns them (0-indexed).
