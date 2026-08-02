@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // ContextRadius is the number of source lines kept above and below an
@@ -24,6 +25,7 @@ type Store struct {
 	mdPath   string
 	srcRoot  string
 	data     map[string]map[int]*Annotation
+	started  string // date the review was started, as recorded in REVIEW.md
 	mu       sync.RWMutex
 	onChange []func()
 }
@@ -39,7 +41,7 @@ func Load(mdPath, srcRoot string) (*Store, error) {
 		return nil, fmt.Errorf("resolve src root: %w", err)
 	}
 
-	data, err := parse(abs)
+	data, started, err := parse(abs)
 	if err != nil {
 		return nil, fmt.Errorf("parse REVIEW.md: %w", err)
 	}
@@ -48,6 +50,7 @@ func Load(mdPath, srcRoot string) (*Store, error) {
 		mdPath:  abs,
 		srcRoot: srcAbs,
 		data:    data,
+		started: started,
 	}, nil
 }
 
@@ -167,11 +170,12 @@ func (s *Store) Reload() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data, err := parse(s.mdPath)
+	data, started, err := parse(s.mdPath)
 	if err != nil {
 		return fmt.Errorf("parse REVIEW.md: %w", err)
 	}
 	s.data = data
+	s.started = started
 	return nil
 }
 
@@ -184,7 +188,10 @@ func (s *Store) Flush() error {
 
 // flush serialises the map and atomically writes REVIEW.md.
 func (s *Store) flush() error {
-	content := serialize(s.data)
+	if s.started == "" {
+		s.started = time.Now().Format(startedFormat)
+	}
+	content := serialize(s.data, s.started)
 	tmp := s.mdPath + ".tmp"
 
 	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {

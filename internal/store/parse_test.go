@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ This is a comment
 `
 	os.WriteFile(mdPath, []byte(content), 0644)
 
-	data, err := parse(mdPath)
+	data, _, err := parse(mdPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ This is outdated
 `
 	os.WriteFile(mdPath, []byte(content), 0644)
 
-	data, err := parse(mdPath)
+	data, _, err := parse(mdPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ Normal comment
 `
 	os.WriteFile(mdPath, []byte(content), 0644)
 
-	data, err := parse(mdPath)
+	data, _, err := parse(mdPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,11 +127,38 @@ Normal comment
 }
 
 func TestParse_NonexistentFile(t *testing.T) {
-	data, err := parse("/nonexistent/REVIEW.md")
+	data, _, err := parse("/nonexistent/REVIEW.md")
 	if err != nil {
 		t.Fatal("expected no error for nonexistent file")
 	}
 	if len(data) != 0 {
 		t.Errorf("expected empty data, got %v", data)
+	}
+}
+
+// TestParse_StartedPreserved verifies the review's start date is read back and
+// not replaced with the date of the latest change.
+func TestParse_StartedPreserved(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "test.go"), []byte("a\nb\nc\n"), 0644)
+	mdPath := filepath.Join(tmpDir, "REVIEW.md")
+
+	content := "# Code Review\n\n_Started: 2020-01-01_\n\n---\n\n## `test.go`\n\n#### Line 1\n\n> old comment\n"
+	os.WriteFile(mdPath, []byte(content), 0644)
+
+	st, err := Load(mdPath, tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set("test.go", 2, "new comment"); err != nil {
+		t.Fatal(err)
+	}
+
+	written, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), "_Started: 2020-01-01_") {
+		t.Errorf("start date not preserved, file is:\n%s", written)
 	}
 }

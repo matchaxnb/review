@@ -12,18 +12,23 @@ var (
 	fileHeaderRe  = regexp.MustCompile("^## `(.+)`$")
 	lineHeaderRe  = regexp.MustCompile(`^#### Line (\d+)(.*)$`)
 	contextLineRe = regexp.MustCompile(`^(\d+): (.*)$`)
+	startedRe     = regexp.MustCompile(`^_Started: (.+)_$`)
 )
 
-// parse reads a REVIEW.md file and returns the annotation map.
-func parse(path string) (map[string]map[int]*Annotation, error) {
+// parse reads a REVIEW.md file and returns the annotation map together with
+// the date the review was started, which is empty for a file that does not
+// record one.
+func parse(path string) (map[string]map[int]*Annotation, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return make(map[string]map[int]*Annotation), nil
+			return make(map[string]map[int]*Annotation), "", nil
 		}
-		return nil, err
+		return nil, "", err
 	}
 	defer f.Close()
+
+	var started string
 
 	data := make(map[string]map[int]*Annotation)
 
@@ -73,6 +78,10 @@ func parse(path string) (map[string]map[int]*Annotation, error) {
 					data[currentFile] = make(map[int]*Annotation)
 				}
 				st = inFile
+			} else if started == "" {
+				if m := startedRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+					started = m[1]
+				}
 			}
 
 		case inFile:
@@ -161,8 +170,8 @@ func parse(path string) (map[string]map[int]*Annotation, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	return data, nil
+	return data, started, nil
 }

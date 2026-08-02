@@ -7,19 +7,21 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/alecthomas/chroma/v2/lexers"
 )
 
+// startedFormat is the layout of the review's start date in REVIEW.md.
+const startedFormat = "2006-01-02"
+
 // serialize converts the annotation map to a markdown string. The context
 // blocks are written from the context stored with each annotation, which is
 // the code as it looked when the annotation was last in sync with the source.
-func serialize(data map[string]map[int]*Annotation) string {
+func serialize(data map[string]map[int]*Annotation, started string) string {
 	var b strings.Builder
 
 	b.WriteString("# Code Review\n\n")
-	b.WriteString(fmt.Sprintf("_Started: %s_\n", time.Now().Format("2006-01-02")))
+	b.WriteString(fmt.Sprintf("_Started: %s_\n", started))
 
 	// Sort file paths
 	paths := make([]string, 0, len(data))
