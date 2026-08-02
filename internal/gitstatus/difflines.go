@@ -18,6 +18,14 @@ const (
 	LineModified LineChange = "modified"
 )
 
+// diffContext is the number of unchanged lines git includes around a change.
+// They are shown in the hunk tooltip.
+const diffContext = 3
+
+// maxDiffLine bounds a single line of diff output, so that a file with very
+// long lines is still read completely.
+const maxDiffLine = 1 << 20
+
 // hunkRe matches unified diff hunk headers: @@ -old[,count] +new[,count] @@
 var hunkRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
@@ -28,96 +36,173 @@ type FileDiffInfo struct {
 	Deletions []DiffDeletion
 }
 
-// GetFileDiff returns all diff information for a file in a single call,
-// minimizing the number of git subprocess spawns. With a base commit set, the
-// file is diffed against that commit instead of against HEAD.
+// DiffDeletion represents a block of lines deleted between two lines in the new file.
+type DiffDeletion struct {
+	AfterLine int `json:"afterLine"` // deletion sits after this line (0 = top of file)
+	Count     int `json:"count"`     // number of lines deleted
+	HunkIndex int `json:"hunkIndex"` // index into DiffHunks for tooltip
+}
+
+// DiffHunk represents a single diff hunk with its affected line range and raw diff text.
+type DiffHunk struct {
+	StartLine int    `json:"startLine"` // first new-file line in hunk
+	EndLine   int    `json:"endLine"`   // last new-file line in hunk
+	Diff      string `json:"diff"`      // raw diff lines (- and + lines)
+}
+
+// GetFileDiff returns all diff information for a file. With a base commit set,
+// the file is diffed against that commit instead of against HEAD.
+//
+// The diff and the check for an untracked file run at the same time, because
+// which of the two answers is needed only shows once the diff is in.
 func GetFileDiff(dir string, base Base, filePath string) *FileDiffInfo {
-	status := fileStatus(dir, base, filePath)
-	if status == "" {
-		return &FileDiffInfo{}
-	}
-
-	if status == StatusUntracked || status == StatusAdded {
-		return &FileDiffInfo{Lines: allLinesAdded(dir, filePath)}
-	}
-
-	// Run both diffs concurrently
-	type diffResult struct {
+	type result struct {
 		out []byte
 		err error
 	}
-	ch0 := make(chan diffResult, 1)
-	ch3 := make(chan diffResult, 1)
+	run := func(args ...string) <-chan result {
+		ch := make(chan result, 1)
+		go func() {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = dir
+			out, err := cmd.Output()
+			ch <- result{out, err}
+		}()
+		return ch
+	}
 
-	rev := base.rev()
-	go func() {
-		cmd := exec.Command("git", "diff", rev, "--unified=0", "--no-color", "--", filePath)
-		cmd.Dir = dir
-		out, err := cmd.Output()
-		ch0 <- diffResult{out, err}
-	}()
-	go func() {
-		cmd := exec.Command("git", "diff", rev, "--unified=3", "--no-color", "--", filePath)
-		cmd.Dir = dir
-		out, err := cmd.Output()
-		ch3 <- diffResult{out, err}
-	}()
+	diffCh := run("diff", base.rev(), "--unified="+strconv.Itoa(diffContext), "--no-color", "--", filePath)
+	untrackedCh := run("ls-files", "--others", "--exclude-standard", "--", filePath)
 
-	r0 := <-ch0
-	r3 := <-ch3
+	diff := <-diffCh
+	untracked := <-untrackedCh
 
+	if diff.err == nil && len(diff.out) > 0 {
+		return parseDiff(diff.out)
+	}
+	if untracked.err == nil && len(untracked.out) > 0 {
+		// The file is new to git, so all of it is new
+		return &FileDiffInfo{Lines: allLinesAdded(dir, filePath)}
+	}
+	return &FileDiffInfo{}
+}
+
+// parseDiff turns unified diff output for a single file into the line markers,
+// hunks and deletion markers the frontend draws.
+//
+// Added and modified lines are told apart by looking at the diff body rather
+// than the hunk header: with context around a change, one hunk can hold both.
+// A run of removed lines that is not replaced by added ones becomes a deletion
+// marker sitting after the last line that survived.
+func parseDiff(out []byte) *FileDiffInfo {
 	info := &FileDiffInfo{}
 
-	if r0.err == nil && len(r0.out) > 0 {
-		info.Lines = parseDiffHunks(r0.out)
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	scanner.Buffer(make([]byte, 0, 64*1024), maxDiffLine)
+
+	var (
+		current   *DiffHunk // hunk being read
+		newLine   int       // next line number in the new file
+		removed   int       // removed lines seen since the last unchanged line
+		replacing bool      // the run of added lines replaces removed ones
+	)
+
+	// endRun closes a run of removed lines, recording a deletion marker for
+	// those that nothing was put in place of.
+	endRun := func() {
+		if removed > 0 {
+			after := newLine - 1
+			if after < 0 {
+				after = 0
+			}
+			info.Deletions = append(info.Deletions, DiffDeletion{
+				AfterLine: after,
+				Count:     removed,
+				HunkIndex: len(info.Hunks),
+			})
+			removed = 0
+		}
+		replacing = false
 	}
 
-	if r3.err == nil && len(r3.out) > 0 {
-		info.Hunks = parseHunksWithDiff(r3.out)
+	// endHunk finishes the hunk being read.
+	endHunk := func() {
+		if current == nil {
+			return
+		}
+		endRun()
+		info.Hunks = append(info.Hunks, *current)
+		current = nil
 	}
 
-	if len(info.Hunks) > 0 && r0.err == nil && len(r0.out) > 0 {
-		info.Deletions = parseDeletionsFromDiff(r0.out, info.Hunks)
+	mark := func(change LineChange) {
+		if info.Lines == nil {
+			info.Lines = make(map[int]LineChange)
+		}
+		info.Lines[newLine] = change
 	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if m := hunkRe.FindStringSubmatch(line); m != nil {
+			endHunk()
+			newStart, _ := strconv.Atoi(m[3])
+			newCount := 1
+			if m[4] != "" {
+				newCount, _ = strconv.Atoi(m[4])
+			}
+			current = &DiffHunk{StartLine: newStart, EndLine: newStart + newCount - 1}
+			newLine = newStart
+			continue
+		}
+
+		// Everything before the first hunk header is the file header
+		if current == nil {
+			continue
+		}
+
+		if line == "" {
+			// An unchanged empty line is written without its leading space
+			endRun()
+			current.Diff += "\n"
+			newLine++
+			continue
+		}
+
+		switch line[0] {
+		case ' ':
+			endRun()
+			current.Diff += line + "\n"
+			newLine++
+		case '-':
+			if replacing {
+				endRun() // a new run of changes starts
+			}
+			removed++
+			current.Diff += line + "\n"
+		case '+':
+			if removed > 0 {
+				replacing = true
+				removed = 0 // replaced, not deleted
+			}
+			if replacing {
+				mark(LineModified)
+			} else {
+				mark(LineAdded)
+			}
+			current.Diff += line + "\n"
+			newLine++
+		case '\\':
+			// "\ No newline at end of file"
+			current.Diff += line + "\n"
+		default:
+			endHunk()
+		}
+	}
+	endHunk()
 
 	return info
-}
-
-// fileStatus returns the git status for a single file, relative to the base
-// commit when one is set.
-func fileStatus(dir string, base Base, filePath string) Status {
-	if base.Commit != "" {
-		return fileStatusSince(dir, base, filePath)
-	}
-	cmd := exec.Command("git", "status", "--porcelain", "--", filePath)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
-		return StatusNone
-	}
-	line := string(out)
-	if len(line) < 4 {
-		return StatusNone
-	}
-	return classifyStatus(line[0], line[1])
-}
-
-// fileStatusSince returns how a single file differs from the base commit.
-func fileStatusSince(dir string, base Base, filePath string) Status {
-	cmd := exec.Command("git", "diff", "--name-status", base.Commit, "--", filePath)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err == nil && len(out) > 0 {
-		return classifyDiffStatus(out[0])
-	}
-
-	// No diff against the base: the file is either unchanged or untracked
-	cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard", "--", filePath)
-	cmd.Dir = dir
-	if out, err := cmd.Output(); err == nil && len(out) > 0 {
-		return StatusUntracked
-	}
-	return StatusNone
 }
 
 // allLinesAdded reads the file and marks every line as "added".
@@ -136,183 +221,6 @@ func allLinesAdded(dir, filePath string) map[int]LineChange {
 	result := make(map[int]LineChange, n)
 	for i := 1; i <= n; i++ {
 		result[i] = LineAdded
-	}
-	return result
-}
-
-// DiffDeletion represents a block of lines deleted between two lines in the new file.
-type DiffDeletion struct {
-	AfterLine int `json:"afterLine"` // deletion sits after this line (0 = top of file)
-	Count     int `json:"count"`     // number of lines deleted
-	HunkIndex int `json:"hunkIndex"` // index into DiffHunks for tooltip
-}
-
-// DiffHunk represents a single diff hunk with its affected line range and raw diff text.
-type DiffHunk struct {
-	StartLine int    `json:"startLine"` // first new-file line in hunk
-	EndLine   int    `json:"endLine"`   // last new-file line in hunk
-	Diff      string `json:"diff"`      // raw diff lines (- and + lines)
-}
-
-// parseDeletionsFromDiff extracts deletion markers from unified=0 diff output.
-func parseDeletionsFromDiff(diffOutput []byte, hunks []DiffHunk) []DiffDeletion {
-	var deletions []DiffDeletion
-	scanner := bufio.NewScanner(bytes.NewReader(diffOutput))
-	for scanner.Scan() {
-		line := scanner.Text()
-		m := hunkRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		oldCount := 1
-		newCount := 1
-		newStart, _ := strconv.Atoi(m[3])
-		if m[2] != "" {
-			oldCount, _ = strconv.Atoi(m[2])
-		}
-		if m[4] != "" {
-			newCount, _ = strconv.Atoi(m[4])
-		}
-		// Pure deletion: lines removed, nothing added
-		if newCount == 0 && oldCount > 0 {
-			hunkIdx := -1
-			for i, h := range hunks {
-				if h.StartLine == newStart && h.EndLine == newStart-1 {
-					hunkIdx = i
-					break
-				}
-			}
-			if hunkIdx == -1 {
-				for i, h := range hunks {
-					if h.StartLine <= newStart && h.EndLine >= newStart-1 {
-						hunkIdx = i
-						break
-					}
-				}
-			}
-			deletions = append(deletions, DiffDeletion{
-				AfterLine: newStart,
-				Count:     oldCount,
-				HunkIndex: hunkIdx,
-			})
-		}
-	}
-	return deletions
-}
-
-// parseHunksWithDiff extracts hunks with their raw diff text.
-func parseHunksWithDiff(diffOutput []byte) []DiffHunk {
-	var hunks []DiffHunk
-	scanner := bufio.NewScanner(bytes.NewReader(diffOutput))
-	var current *DiffHunk
-	var newLine int
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if m := hunkRe.FindStringSubmatch(line); m != nil {
-			if current != nil {
-				hunks = append(hunks, *current)
-			}
-			newStart, _ := strconv.Atoi(m[3])
-			newCount := 1
-			if m[4] != "" {
-				newCount, _ = strconv.Atoi(m[4])
-			}
-			current = &DiffHunk{
-				StartLine: newStart,
-				EndLine:   newStart + newCount - 1,
-			}
-			newLine = newStart
-			continue
-		}
-
-		if current == nil {
-			continue
-		}
-
-		if len(line) == 0 {
-			current.Diff += "\n"
-			continue
-		}
-
-		switch line[0] {
-		case '-':
-			current.Diff += line + "\n"
-		case '+':
-			current.Diff += line + "\n"
-			newLine++
-		case ' ':
-			current.Diff += line + "\n"
-			newLine++
-		default:
-			// End of hunk
-			if current != nil {
-				hunks = append(hunks, *current)
-				current = nil
-			}
-		}
-	}
-
-	if current != nil {
-		hunks = append(hunks, *current)
-	}
-
-	return hunks
-}
-
-// parseDiffHunks extracts changed line numbers from unified diff output.
-func parseDiffHunks(diffOutput []byte) map[int]LineChange {
-	result := make(map[int]LineChange)
-
-	scanner := bufio.NewScanner(bytes.NewReader(diffOutput))
-	var inHunk bool
-	var newStart, oldCount, newCount int
-	var hunkLine int
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if m := hunkRe.FindStringSubmatch(line); m != nil {
-			// Parse hunk header
-			oldCount = 1
-			newCount = 1
-			newStart, _ = strconv.Atoi(m[3])
-			if m[2] != "" {
-				oldCount, _ = strconv.Atoi(m[2])
-			}
-			if m[4] != "" {
-				newCount, _ = strconv.Atoi(m[4])
-			}
-
-			// Determine change type for this hunk
-			changeType := LineModified
-			if oldCount == 0 {
-				// Pure addition (no old lines removed)
-				changeType = LineAdded
-			}
-
-			// Mark all new lines in this hunk
-			for i := 0; i < newCount; i++ {
-				result[newStart+i] = changeType
-			}
-
-			inHunk = true
-			hunkLine = 0
-			continue
-		}
-
-		if inHunk {
-			if len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' ') {
-				hunkLine++
-			} else {
-				inHunk = false
-			}
-		}
-	}
-
-	if len(result) == 0 {
-		return nil
 	}
 	return result
 }
