@@ -29,9 +29,10 @@ type FileDiffInfo struct {
 }
 
 // GetFileDiff returns all diff information for a file in a single call,
-// minimizing the number of git subprocess spawns.
-func GetFileDiff(dir, filePath string) *FileDiffInfo {
-	status := fileStatus(dir, filePath)
+// minimizing the number of git subprocess spawns. With a base commit set, the
+// file is diffed against that commit instead of against HEAD.
+func GetFileDiff(dir string, base Base, filePath string) *FileDiffInfo {
+	status := fileStatus(dir, base, filePath)
 	if status == "" {
 		return &FileDiffInfo{}
 	}
@@ -48,14 +49,15 @@ func GetFileDiff(dir, filePath string) *FileDiffInfo {
 	ch0 := make(chan diffResult, 1)
 	ch3 := make(chan diffResult, 1)
 
+	rev := base.rev()
 	go func() {
-		cmd := exec.Command("git", "diff", "HEAD", "--unified=0", "--no-color", "--", filePath)
+		cmd := exec.Command("git", "diff", rev, "--unified=0", "--no-color", "--", filePath)
 		cmd.Dir = dir
 		out, err := cmd.Output()
 		ch0 <- diffResult{out, err}
 	}()
 	go func() {
-		cmd := exec.Command("git", "diff", "HEAD", "--unified=3", "--no-color", "--", filePath)
+		cmd := exec.Command("git", "diff", rev, "--unified=3", "--no-color", "--", filePath)
 		cmd.Dir = dir
 		out, err := cmd.Output()
 		ch3 <- diffResult{out, err}
@@ -81,8 +83,12 @@ func GetFileDiff(dir, filePath string) *FileDiffInfo {
 	return info
 }
 
-// fileStatus returns the git status for a single file.
-func fileStatus(dir, filePath string) Status {
+// fileStatus returns the git status for a single file, relative to the base
+// commit when one is set.
+func fileStatus(dir string, base Base, filePath string) Status {
+	if base.Commit != "" {
+		return fileStatusSince(dir, base, filePath)
+	}
 	cmd := exec.Command("git", "status", "--porcelain", "--", filePath)
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -94,6 +100,24 @@ func fileStatus(dir, filePath string) Status {
 		return StatusNone
 	}
 	return classifyStatus(line[0], line[1])
+}
+
+// fileStatusSince returns how a single file differs from the base commit.
+func fileStatusSince(dir string, base Base, filePath string) Status {
+	cmd := exec.Command("git", "diff", "--name-status", base.Commit, "--", filePath)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err == nil && len(out) > 0 {
+		return classifyDiffStatus(out[0])
+	}
+
+	// No diff against the base: the file is either unchanged or untracked
+	cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard", "--", filePath)
+	cmd.Dir = dir
+	if out, err := cmd.Output(); err == nil && len(out) > 0 {
+		return StatusUntracked
+	}
+	return StatusNone
 }
 
 // allLinesAdded reads the file and marks every line as "added".

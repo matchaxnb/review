@@ -27,7 +27,7 @@
   // DOM references
   let treeContainer, codeContent, codeHeader, commentList, commentEditor,
       editorTextarea, editorLineLabel, statusCommentCount, statusMdPath,
-      wsIndicator, toastContainer;
+      statusBase, wsIndicator, toastContainer;
 
   // Initialize
   document.addEventListener('DOMContentLoaded', () => {
@@ -40,9 +40,11 @@
     editorLineLabel = document.getElementById('editor-line-label');
     statusCommentCount = document.getElementById('status-comment-count');
     statusMdPath = document.getElementById('status-md-path');
+    statusBase = document.getElementById('status-base');
     wsIndicator = document.getElementById('ws-indicator');
     toastContainer = document.getElementById('toast-container');
 
+    loadConfig();
     loadTree();
     loadAllAnnotations();
     loadGitStatusNow();
@@ -182,6 +184,20 @@
       toast.classList.add('toast-fade');
       setTimeout(() => toast.remove(), 300);
     }, 4000);
+  }
+
+  // Load review settings and show the compare base if one is set
+  async function loadConfig() {
+    try {
+      const config = await api('GET', '/api/config');
+      if (config.base && statusBase) {
+        statusBase.textContent = 'compared to ' + config.base;
+        statusBase.title = 'Changes are highlighted relative to ' + config.base;
+        statusBase.style.display = '';
+      }
+    } catch (e) {
+      console.error('Failed to load config:', e);
+    }
   }
 
   // Load file tree

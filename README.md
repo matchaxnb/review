@@ -11,6 +11,7 @@ The tool was vibecoded as a simple way to review agentic coded files. The markdo
 - **Syntax highlighting** — powered by [Chroma](https://github.com/alecthomas/chroma)
 - **Git status integration** — files and directories are color-coded by git status (modified, staged, untracked, etc.)
 - **Git diff markers** — changed, added, and deleted lines are marked in the gutter; hover to see the full diff hunk
+- **Compare against a base** — review an already committed branch by diffing it against a branch, tag, or commit
 - **Scrollbar annotations** — colored markers on the scrollbar show where comments and changes are in long files
 - **Live updates** — files reload automatically when changed on disk via WebSocket-based file watching
 - **Drift detection** — annotations automatically relocate when code moves, or are marked outdated if context is lost
@@ -41,6 +42,9 @@ make
 
 # Review a specific directory on a custom port
 ./review -dir /path/to/project -port 8080
+
+# Review a branch that is already committed, comparing it against main
+./review main
 ```
 
 Then open `http://localhost:7070` (or your chosen port) in a browser (should happen automatically).
@@ -51,6 +55,18 @@ Then open `http://localhost:7070` (or your chosen port) in a browser (should hap
 |------|---------|-------------|
 | `-dir` | `.` | Root directory of the project to review |
 | `-port` | `7070` | HTTP server port |
+
+### Comparing Against a Base Revision
+
+By default, files and lines are highlighted by their working tree changes, so nothing stands out once the work is committed. Pass a branch, tag or commit ID as argument to review committed work instead:
+
+```sh
+./review main
+./review v1.2.0
+./review 8f3a91c
+```
+
+Highlighting and diff hunks then cover everything that changed between that revision and the current working tree, committed or not. The comparison starts at the merge base of the given revision and `HEAD`, so commits made on the base branch after branching off are not shown as changes. The active base is displayed in the status bar.
 
 ## How It Works
 
@@ -74,6 +90,7 @@ The tool exposes a JSON API for the frontend:
 | `POST` | `/api/annotations` | Create or update an annotation |
 | `DELETE` | `/api/annotations` | Delete an annotation |
 | `GET` | `/api/git-status` | Git status for all files |
+| `GET` | `/api/config` | Review settings, currently the base revision |
 | `DELETE` | `/api/review` | Delete REVIEW.md and start a new review |
 | `GET` | `/ws` | WebSocket for live updates |
 

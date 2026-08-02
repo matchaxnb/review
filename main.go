@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"review/internal/gitstatus"
 	"review/internal/server"
 	"review/internal/store"
 	"review/internal/watcher"
@@ -27,11 +28,25 @@ var frontendFS embed.FS
 func main() {
 	port := flag.Int("port", 7070, "HTTP server port")
 	dir := flag.String("dir", ".", "Root directory to review")
+	flag.Usage = usage
 	flag.Parse()
+
+	if flag.NArg() > 1 {
+		flag.Usage()
+		os.Exit(2)
+	}
 
 	rootDir, err := filepath.Abs(*dir)
 	if err != nil {
 		log.Fatalf("Failed to resolve directory: %v", err)
+	}
+
+	var baseCommit gitstatus.Base
+	if base := flag.Arg(0); base != "" {
+		baseCommit, err = gitstatus.ResolveBase(rootDir, base)
+		if err != nil {
+			log.Fatalf("Failed to resolve base revision: %v", err)
+		}
 	}
 
 	mdPath := filepath.Join(rootDir, "REVIEW.md")
@@ -92,12 +107,15 @@ func main() {
 		}()
 	}
 
-	handler := server.New(st, rootDir, subFS, hub)
+	handler := server.New(st, rootDir, baseCommit, subFS, hub)
 
 	addr := fmt.Sprintf(":%d", *port)
 	url := fmt.Sprintf("http://localhost:%d", *port)
 	fmt.Printf("Code Review running at %s\n", url)
 	fmt.Printf("Reviewing: %s\n", rootDir)
+	if baseCommit.Commit != "" {
+		fmt.Printf("Comparing against: %s (%s)\n", baseCommit.Rev, baseCommit.Commit[:7])
+	}
 	fmt.Printf("Annotations: %s\n", st.MdPath())
 
 	go openBrowser(url)
@@ -121,6 +139,15 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+}
+
+// usage prints the command line syntax, including the optional base revision
+// that the flag package does not know about.
+func usage() {
+	out := flag.CommandLine.Output()
+	fmt.Fprintf(out, "Usage: %s [flags] [base]\n\n", filepath.Base(os.Args[0]))
+	fmt.Fprint(out, "  base\n    \tBranch, tag or commit to compare against instead of HEAD\n")
+	flag.PrintDefaults()
 }
 
 // annotationsToResponse converts store annotations to the API response format.

@@ -18,6 +18,7 @@ import (
 type handlers struct {
 	store   *store.Store
 	rootDir string
+	base    gitstatus.Base
 }
 
 func (h *handlers) handleTree(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +59,7 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hl := highlight.Highlight(path, string(content))
-	diff := gitstatus.GetFileDiff(h.rootDir, path)
+	diff := gitstatus.GetFileDiff(h.rootDir, h.base, path)
 	resp := fileResponse{
 		HTML:          hl.HTML,
 		Language:      hl.Language,
@@ -159,8 +160,17 @@ func (h *handlers) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, map[string]string{"status": "ok"})
 }
 
+// configResponse is the JSON shape for the review's global settings.
+type configResponse struct {
+	Base string `json:"base"` // revision changes are compared against, empty when comparing against HEAD
+}
+
+func (h *handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, configResponse{Base: h.base.Rev})
+}
+
 func (h *handlers) handleGitStatus(w http.ResponseWriter, r *http.Request) {
-	statuses := gitstatus.Get(h.rootDir)
+	statuses := gitstatus.Get(h.rootDir, h.base)
 	if statuses == nil {
 		// Not a git repo — return empty object
 		jsonResponse(w, map[string]string{})

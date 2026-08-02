@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"review/internal/gitstatus"
 	"review/internal/store"
 
 	"github.com/go-chi/chi/v5"
@@ -12,8 +13,9 @@ import (
 
 // New creates and returns the HTTP handler.
 // frontendFS should be the embedded frontend filesystem (already sub'd to the frontend root).
+// base is the commit to compare against; its zero value compares against HEAD.
 // hub may be nil if WebSocket support is not needed.
-func New(st *store.Store, rootDir string, frontendFS fs.FS, hub *Hub) http.Handler {
+func New(st *store.Store, rootDir string, base gitstatus.Base, frontendFS fs.FS, hub *Hub) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
@@ -21,6 +23,7 @@ func New(st *store.Store, rootDir string, frontendFS fs.FS, hub *Hub) http.Handl
 	h := &handlers{
 		store:   st,
 		rootDir: rootDir,
+		base:    base,
 	}
 
 	// Serve frontend
@@ -38,6 +41,7 @@ func New(st *store.Store, rootDir string, frontendFS fs.FS, hub *Hub) http.Handl
 	r.Post("/api/annotations", h.handleSetAnnotation)
 	r.Delete("/api/annotations", h.handleDeleteAnnotation)
 	r.Get("/api/git-status", h.handleGitStatus)
+	r.Get("/api/config", h.handleConfig)
 	r.Get("/api/chroma.css", h.handleChromaCSS)
 	r.Delete("/api/review", h.handleDeleteReview)
 

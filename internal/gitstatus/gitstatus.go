@@ -3,6 +3,7 @@ package gitstatus
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -24,14 +25,66 @@ const (
 // FileStatuses maps relative file paths to their git status.
 type FileStatuses map[string]Status
 
-// Get returns the git status for all files in the given directory.
-// Returns nil if the directory is not a git repository.
-func Get(dir string) FileStatuses {
+// Base identifies the commit a review is compared against.
+// The zero value compares against the working tree's HEAD.
+type Base struct {
+	Rev    string // revision as given by the user, empty when comparing against HEAD
+	Commit string // commit the diffs are taken from, empty when comparing against HEAD
+}
+
+// rev returns the revision to hand to git diff.
+func (b Base) rev() string {
+	if b.Commit == "" {
+		return "HEAD"
+	}
+	return b.Commit
+}
+
+// ResolveBase determines the commit to compare a review against for a
+// user-supplied revision such as a branch name, tag or commit ID. The merge
+// base of that revision and HEAD is used, so commits made on the base branch
+// after branching off are not reported as changes. Falls back to the revision
+// itself when the two have no common ancestor. Returns an error if the
+// directory is no git repository or the revision is unknown to it.
+func ResolveBase(dir, rev string) (Base, error) {
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		return Base{}, fmt.Errorf("%s is not a git repository", dir)
+	}
+
+	cmd = exec.Command("git", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return Base{}, fmt.Errorf("unknown revision %q", rev)
+	}
+	commit := strings.TrimSpace(string(out))
+
+	cmd = exec.Command("git", "merge-base", commit, "HEAD")
+	cmd.Dir = dir
+	if out, err := cmd.Output(); err == nil {
+		if mb := strings.TrimSpace(string(out)); mb != "" {
+			commit = mb
+		}
+	}
+
+	return Base{Rev: rev, Commit: commit}, nil
+}
+
+// Get returns the git status for all files in the given directory. With a base
+// commit set, files are reported by how they differ from that commit instead of
+// from HEAD. Returns nil if the directory is not a git repository.
+func Get(dir string, base Base) FileStatuses {
 	// Check if this is a git repo
 	cmd := exec.Command("git", "rev-parse", "--git-dir")
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
 		return nil
+	}
+
+	if base.Commit != "" {
+		return statusesSince(dir, base)
 	}
 
 	// Get porcelain status. core.quotepath=false keeps non-ASCII paths
@@ -70,6 +123,62 @@ func Get(dir string) FileStatuses {
 	}
 
 	return result
+}
+
+// statusesSince reports how the working tree differs from the base commit,
+// covering both committed and uncommitted changes. Untracked files are listed
+// as well since they are part of what is under review.
+func statusesSince(dir string, base Base) FileStatuses {
+	result := make(FileStatuses)
+
+	// core.quotepath=false keeps non-ASCII paths (e.g. umlauts) unquoted so they
+	// match the paths reported by the file tree.
+	cmd := exec.Command("git", "-c", "core.quotepath=false", "diff", "--name-status", base.Commit)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		fields := strings.Split(scanner.Text(), "\t")
+		if len(fields) < 2 || fields[0] == "" {
+			continue
+		}
+		// Renames and copies report both the old and the new path
+		path := fields[len(fields)-1]
+		status := classifyDiffStatus(fields[0][0])
+		if status != StatusNone {
+			result[filepath.Clean(path)] = status
+		}
+	}
+
+	cmd = exec.Command("git", "-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard")
+	cmd.Dir = dir
+	if out, err := cmd.Output(); err == nil {
+		scanner := bufio.NewScanner(bytes.NewReader(out))
+		for scanner.Scan() {
+			if path := scanner.Text(); path != "" {
+				result[filepath.Clean(path)] = StatusUntracked
+			}
+		}
+	}
+
+	return result
+}
+
+// classifyDiffStatus maps a git diff --name-status letter to a Status.
+func classifyDiffStatus(code byte) Status {
+	switch code {
+	case 'A':
+		return StatusAdded
+	case 'D':
+		return StatusDeleted
+	case 'M', 'R', 'C', 'T':
+		return StatusModified
+	}
+	return StatusNone
 }
 
 func classifyStatus(x, y byte) Status {
