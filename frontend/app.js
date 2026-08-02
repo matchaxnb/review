@@ -577,6 +577,7 @@
       state.editingLine = null;
       updateEditorVisibility();
       renderCommentList();
+      renderScrollbarMarkers();
       renderTree();
       updateCommentCount();
     } catch (e) {
@@ -612,6 +613,7 @@
       state.editingLine = null;
       updateEditorVisibility();
       renderCommentList();
+      renderScrollbarMarkers();
       renderTree();
       updateCommentCount();
     } catch (e) {
