@@ -2,6 +2,7 @@ package highlight
 
 import (
 	"bytes"
+	stdhtml "html"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters/html"
@@ -73,14 +74,23 @@ func Highlight(filename, content string) Result {
 
 	iterator, err := lexer.Tokenise(nil, content)
 	if err != nil {
-		return Result{HTML: content, Language: "plaintext"}
+		return plainResult(content)
 	}
 
 	var buf bytes.Buffer
-	err = formatter.Format(&buf, style, iterator)
-	if err != nil {
-		return Result{HTML: content, Language: "plaintext"}
+	if err := formatter.Format(&buf, style, iterator); err != nil {
+		return plainResult(content)
 	}
 
 	return Result{HTML: buf.String(), Language: lang}
+}
+
+// plainResult renders content as escaped, unhighlighted HTML. It is used when
+// the file cannot be tokenised or formatted, where returning the source as it
+// is would let the browser interpret it as markup.
+func plainResult(content string) Result {
+	return Result{
+		HTML:     "<pre>" + stdhtml.EscapeString(content) + "</pre>",
+		Language: "plaintext",
+	}
 }
