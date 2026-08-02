@@ -89,7 +89,9 @@ func Get(dir string, base Base) FileStatuses {
 
 	// Get porcelain status. core.quotepath=false keeps non-ASCII paths
 	// (e.g. umlauts) unquoted so they match the paths reported by the file tree.
-	cmd = exec.Command("git", "-c", "core.quotepath=false", "status", "--porcelain", "-unormal")
+	// Untracked files are listed individually because the file tree shows them
+	// individually too; a collapsed directory entry would match none of them.
+	cmd = exec.Command("git", "-c", "core.quotepath=false", "status", "--porcelain", "-uall")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
