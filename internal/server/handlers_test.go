@@ -273,6 +273,63 @@ type annotationObj struct {
 	Outdated bool   `json:"outdated"`
 }
 
+func TestFileEndpoint_BinaryFile(t *testing.T) {
+	ts, tmpDir, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "blob.dat"), []byte("PK\x03\x04\x00\x00binary\x00data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(ts.URL + "/api/file?path=blob.dat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for a binary file, got %d", resp.StatusCode)
+	}
+}
+
+func TestFileEndpoint_TooLarge(t *testing.T) {
+	ts, tmpDir, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	big := make([]byte, maxFileSize+1)
+	for i := range big {
+		big[i] = 'a'
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "big.txt"), big, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(ts.URL + "/api/file?path=big.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected 413 for an oversized file, got %d", resp.StatusCode)
+	}
+}
+
+func TestFileEndpoint_Directory(t *testing.T) {
+	ts, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/file?path=subdir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for a directory, got %d", resp.StatusCode)
+	}
+}
+
 func TestAnnotations_GetEmpty(t *testing.T) {
 	ts, _, cleanup := setupTestServer(t)
 	defer cleanup()

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,6 +31,14 @@ func (h *handlers) handleTree(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, tree)
 }
 
+// maxFileSize is the largest file the server reads into memory and hands to
+// the highlighter.
+const maxFileSize = 2 << 20 // 2 MiB
+
+// binarySniffLen is how much of a file is examined to tell code from binary
+// data. Git looks at the same amount.
+const binarySniffLen = 8000
+
 type fileResponse struct {
 	HTML          string                       `json:"html"`
 	Language      string                       `json:"language"`
@@ -52,9 +61,23 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	info, err := os.Stat(absPath)
+	if err != nil || info.IsDir() {
+		jsonError(w, "file not found", http.StatusNotFound)
+		return
+	}
+	if info.Size() > maxFileSize {
+		jsonError(w, "file is too large to display", http.StatusRequestEntityTooLarge)
+		return
+	}
+
 	content, err := os.ReadFile(absPath)
 	if err != nil {
 		jsonError(w, "file not found", http.StatusNotFound)
+		return
+	}
+	if isBinary(content) {
+		jsonError(w, "binary file", http.StatusBadRequest)
 		return
 	}
 
@@ -207,6 +230,15 @@ func (h *handlers) handleDeleteReview(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) handleChromaCSS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/css")
 	w.Write([]byte(highlight.CSS()))
+}
+
+// isBinary reports whether content looks like binary data rather than text.
+// A NUL byte early in the file is the same signal git uses.
+func isBinary(content []byte) bool {
+	if len(content) > binarySniffLen {
+		content = content[:binarySniffLen]
+	}
+	return bytes.IndexByte(content, 0) >= 0
 }
 
 // resolvePath joins a client-supplied relative path against the review root and
