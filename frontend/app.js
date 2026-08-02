@@ -6,7 +6,6 @@
     tree: [],
     openDirs: {},
     currentFile: null,
-    fileHtml: '',
     language: '',
     annotations: {},      // line → {comment, outdated} for current file
     allAnnotations: {},   // path → {line → {comment, outdated}} for all files
@@ -15,7 +14,6 @@
     diffDeletions: [],    // [{afterLine, count, hunkIndex}] for current file
     editingLine: null,
     editingText: '',
-    loading: false,
     gitStatuses: {},
     wsConnected: false,
   };
@@ -337,31 +335,44 @@
     return entry.children && entry.children.some(c => hasAnnotationsInTree(c));
   }
 
-  // Refresh current file (re-fetch annotations, keep scroll position)
+  // Load the open file's content and annotations into the code view
+  async function loadCurrentFile() {
+    const path = state.currentFile;
+    if (!path) return;
+
+    const [fileData, annData] = await Promise.all([
+      api('GET', '/api/file?path=' + encodeURIComponent(path)),
+      api('GET', '/api/annotations?path=' + encodeURIComponent(path)),
+    ]);
+    // Another file was opened while this one was loading
+    if (state.currentFile !== path) return;
+
+    state.language = fileData.language;
+    state.diffLines = fileData.diffLines || {};
+    state.diffHunks = fileData.diffHunks || [];
+    state.diffDeletions = fileData.diffDeletions || [];
+    state.annotations = annData;
+
+    codeHeader.innerHTML = `
+      <span class="file-path">${escapeHtml(path)}</span>
+      <span class="lang-badge">${escapeHtml(state.language)}</span>
+    `;
+    codeContent.innerHTML = fileData.html;
+    attachLineHandlers();
+    renderCommentList();
+  }
+
+  // Reload the open file after it changed on disk
   async function refreshCurrentFile() {
-    if (!state.currentFile) return;
     try {
-      const [fileData, annData] = await Promise.all([
-        api('GET', '/api/file?path=' + encodeURIComponent(state.currentFile)),
-        api('GET', '/api/annotations?path=' + encodeURIComponent(state.currentFile)),
-      ]);
-      state.fileHtml = fileData.html;
-      state.language = fileData.language;
-      state.diffLines = fileData.diffLines || {};
-      state.diffHunks = fileData.diffHunks || [];
-      state.diffDeletions = fileData.diffDeletions || [];
-      state.annotations = annData;
-      codeContent.innerHTML = state.fileHtml;
-      attachLineHandlers();
-      renderCommentList();
+      await loadCurrentFile();
     } catch (e) {
       console.error('Failed to refresh file:', e);
     }
   }
 
-  // Open a file
+  // Open a file from the tree
   async function openFile(path) {
-    state.loading = true;
     state.currentFile = path;
     state.editingLine = null;
     updateEditorVisibility();
@@ -376,34 +387,13 @@
       <span class="lang-badge">loading...</span>
     `;
     codeContent.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
+    renderTree(); // update active state
 
     try {
-      const [fileData, annData] = await Promise.all([
-        api('GET', '/api/file?path=' + encodeURIComponent(path)),
-        api('GET', '/api/annotations?path=' + encodeURIComponent(path)),
-      ]);
-
-      state.fileHtml = fileData.html;
-      state.language = fileData.language;
-      state.diffLines = fileData.diffLines || {};
-      state.diffHunks = fileData.diffHunks || [];
-      state.diffDeletions = fileData.diffDeletions || [];
-      state.annotations = annData;
-
-      codeHeader.innerHTML = `
-        <span class="file-path">${escapeHtml(path)}</span>
-        <span class="lang-badge">${escapeHtml(state.language)}</span>
-      `;
-
-      codeContent.innerHTML = state.fileHtml;
-      attachLineHandlers();
-      renderCommentList();
-      renderTree(); // update active state
+      await loadCurrentFile();
     } catch (e) {
       codeContent.innerHTML = `<div class="empty-state"><p>Error loading file: ${escapeHtml(e.message)}</p></div>`;
     }
-
-    state.loading = false;
   }
 
   // Attach click handlers to code lines
