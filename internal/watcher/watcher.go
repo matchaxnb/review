@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,8 +27,10 @@ type Watcher struct {
 	done       chan struct{}
 	debounce   map[string]*time.Timer
 	debounceMu sync.Mutex
-	extraFiles map[string]bool // additional files to watch (e.g. currently viewed)
-	extraMu    sync.Mutex
+	viewed     string // file currently open in the client, relative to the source root
+	viewedMu   sync.Mutex
+	watched    map[string]bool // directories currently registered with fsnotify
+	watchedMu  sync.Mutex
 }
 
 // New creates a new file watcher. Call Start() to begin watching.
@@ -38,12 +41,12 @@ func New(st *store.Store) (*Watcher, error) {
 	}
 
 	w := &Watcher{
-		store:      st,
-		fsw:        fsw,
-		events:     make(chan Event, 64),
-		done:       make(chan struct{}),
-		debounce:   make(map[string]*time.Timer),
-		extraFiles: make(map[string]bool),
+		store:    st,
+		fsw:      fsw,
+		events:   make(chan Event, 64),
+		done:     make(chan struct{}),
+		debounce: make(map[string]*time.Timer),
+		watched:  make(map[string]bool),
 	}
 
 	return w, nil
@@ -56,19 +59,10 @@ func (w *Watcher) Events() <-chan Event {
 
 // Start begins watching files and processing events.
 func (w *Watcher) Start() {
-	// Watch REVIEW.md
-	mdPath := w.store.MdPath()
-	// Watch the directory containing REVIEW.md (to detect deletion/creation)
-	mdDir := filepath.Dir(mdPath)
-	w.fsw.Add(mdDir)
+	w.syncWatches()
 
-	// Watch all annotated source files
-	w.addAnnotatedFiles()
-
-	// Re-add watches when annotations change
-	w.store.OnChange(func() {
-		w.addAnnotatedFiles()
-	})
+	// Follow the set of annotated files as it changes
+	w.store.OnChange(w.syncWatches)
 
 	go w.loop()
 }
@@ -79,25 +73,69 @@ func (w *Watcher) Stop() {
 	w.fsw.Close()
 }
 
-// WatchFile adds a file to the watch list (e.g. the currently viewed file).
+// WatchFile follows the file a client is currently looking at. Only one such
+// file is watched at a time, and only inside the reviewed directory: the path
+// comes from the client and is not to be trusted.
 func (w *Watcher) WatchFile(relPath string) {
-	w.extraMu.Lock()
-	w.extraFiles[relPath] = true
-	w.extraMu.Unlock()
+	if !within(w.store.SrcRoot(), relPath) {
+		return
+	}
 
-	absPath := filepath.Join(w.store.SrcRoot(), relPath)
-	dir := filepath.Dir(absPath)
-	w.fsw.Add(dir)
+	w.viewedMu.Lock()
+	w.viewed = relPath
+	w.viewedMu.Unlock()
+
+	w.syncWatches()
 }
 
-func (w *Watcher) addAnnotatedFiles() {
+// currentlyViewed returns the file a client last opened.
+func (w *Watcher) currentlyViewed() string {
+	w.viewedMu.Lock()
+	defer w.viewedMu.Unlock()
+	return w.viewed
+}
+
+// syncWatches makes the set of watched directories match what is needed right
+// now: the directory holding REVIEW.md, the directories of annotated files and
+// the directory of the file being viewed. Directories that are no longer of
+// interest are dropped so watches do not pile up while browsing.
+func (w *Watcher) syncWatches() {
 	srcRoot := w.store.SrcRoot()
+	want := map[string]bool{filepath.Dir(w.store.MdPath()): true}
 	for _, relPath := range w.store.AnnotatedFiles() {
-		absPath := filepath.Join(srcRoot, relPath)
-		// Watch the directory containing the file
-		dir := filepath.Dir(absPath)
-		w.fsw.Add(dir)
+		want[filepath.Dir(filepath.Join(srcRoot, relPath))] = true
 	}
+	if viewed := w.currentlyViewed(); viewed != "" {
+		want[filepath.Dir(filepath.Join(srcRoot, viewed))] = true
+	}
+
+	w.watchedMu.Lock()
+	defer w.watchedMu.Unlock()
+	for dir := range w.watched {
+		if !want[dir] {
+			w.fsw.Remove(dir)
+			delete(w.watched, dir)
+		}
+	}
+	for dir := range want {
+		if w.watched[dir] {
+			continue
+		}
+		if err := w.fsw.Add(dir); err != nil {
+			log.Printf("cannot watch %s: %v", dir, err)
+			continue
+		}
+		w.watched[dir] = true
+	}
+}
+
+// within reports whether a relative path stays inside root.
+func within(root, relPath string) bool {
+	if relPath == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, filepath.Join(root, relPath))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (w *Watcher) loop() {
@@ -149,11 +187,8 @@ func (w *Watcher) loop() {
 					w.emitDebounced(absPath, Event{Type: "file-changed", Path: relPath})
 					continue
 				}
-				// Check if this is an extra-watched file (currently viewed)
-				w.extraMu.Lock()
-				isExtra := w.extraFiles[relPath]
-				w.extraMu.Unlock()
-				if isExtra {
+				// Check if this is the file the client is looking at
+				if relPath == w.currentlyViewed() {
 					w.emitDebounced(absPath, Event{Type: "source-changed", Path: relPath})
 				}
 			}

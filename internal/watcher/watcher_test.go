@@ -67,3 +67,52 @@ func TestForeignWriteIsReported(t *testing.T) {
 		t.Error("external change to REVIEW.md was not reported")
 	}
 }
+
+// TestWatchFileDoesNotAccumulate verifies that browsing files leaves only the
+// directories that are still needed under watch.
+func TestWatchFileDoesNotAccumulate(t *testing.T) {
+	st, w, dir := newTestWatcher(t)
+
+	for _, sub := range []string{"one", "two", "three"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sub, "f.go"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		w.WatchFile(filepath.Join(sub, "f.go"))
+	}
+
+	// The review directory and the last viewed file's directory remain
+	w.watchedMu.Lock()
+	got := len(w.watched)
+	w.watchedMu.Unlock()
+	if got != 2 {
+		t.Errorf("expected 2 watched directories, got %d", got)
+	}
+
+	// An annotated file keeps its directory watched even when another is viewed
+	if err := st.Set("one/f.go", 1, "note"); err != nil {
+		t.Fatal(err)
+	}
+	w.WatchFile("a.go")
+	w.watchedMu.Lock()
+	got = len(w.watched)
+	w.watchedMu.Unlock()
+	if got != 2 {
+		t.Errorf("expected 2 watched directories (review root and one/), got %d", got)
+	}
+}
+
+// TestWatchFileRejectsEscapingPaths verifies that a client cannot make the
+// watcher look outside the reviewed directory.
+func TestWatchFileRejectsEscapingPaths(t *testing.T) {
+	_, w, _ := newTestWatcher(t)
+
+	for _, path := range []string{"../outside.go", "../../etc/passwd", ""} {
+		w.WatchFile(path)
+		if viewed := w.currentlyViewed(); viewed != "" {
+			t.Errorf("path %q was accepted as %q", path, viewed)
+		}
+	}
+}
