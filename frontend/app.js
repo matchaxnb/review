@@ -23,12 +23,13 @@
   let gitStatusTimer = null;
 
   // DOM references
-  let treeContainer, codeContent, codeHeader, commentList, commentEditor,
+  let treePane, treeContainer, codeContent, codeHeader, commentList, commentEditor,
       editorTextarea, editorLineLabel, statusCommentCount, statusMdPath,
       statusBase, wsIndicator, toastContainer;
 
   // Initialize
   document.addEventListener('DOMContentLoaded', () => {
+    treePane = document.querySelector('.file-tree');
     treeContainer = document.getElementById('tree-container');
     codeContent = document.getElementById('code-content');
     codeHeader = document.getElementById('code-header');
@@ -265,8 +266,10 @@
 
   // Render file tree
   function renderTree() {
+    const scrollTop = treePane.scrollTop;
     treeContainer.innerHTML = '';
     renderTreeLevel(state.tree, treeContainer, 0);
+    treePane.scrollTop = scrollTop;
   }
 
   function renderTreeLevel(entries, container, depth) {
@@ -335,11 +338,13 @@
     return entry.children && entry.children.some(c => hasAnnotationsInTree(c));
   }
 
-  // Load the open file's content and annotations into the code view
+  // Load the open file's content and annotations into the code view. The
+  // scroll position is kept so a reload after a change stays where you were.
   async function loadCurrentFile() {
     const path = state.currentFile;
     if (!path) return;
 
+    const scrollTop = codeContent.scrollTop;
     const [fileData, annData] = await Promise.all([
       api('GET', '/api/file?path=' + encodeURIComponent(path)),
       api('GET', '/api/annotations?path=' + encodeURIComponent(path)),
@@ -358,6 +363,7 @@
       <span class="lang-badge">${escapeHtml(state.language)}</span>
     `;
     codeContent.innerHTML = fileData.html;
+    codeContent.scrollTop = scrollTop;
     attachLineHandlers();
     renderCommentList();
   }
