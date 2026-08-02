@@ -51,30 +51,33 @@ func (h *Hub) Run() {
 		case <-h.done:
 			return
 		case msg := <-h.broadcast:
+			var stalled []*wsClient
 			h.mu.RLock()
 			for client := range h.clients {
 				select {
 				case client.send <- msg:
 				default:
-					// Client too slow — close it
-					close(client.send)
-					delete(h.clients, client)
+					stalled = append(stalled, client)
 				}
 			}
 			h.mu.RUnlock()
+			// Drop clients that cannot keep up, outside the read lock
+			for _, client := range stalled {
+				h.remove(client)
+			}
 		}
 	}
 }
 
-// Stop shuts down the hub.
-func (h *Hub) Stop() {
-	close(h.done)
+// remove unregisters a client and closes its send channel, which lets its
+// writer finish. Removing a client that is already gone does nothing.
+func (h *Hub) remove(c *wsClient) {
 	h.mu.Lock()
-	for client := range h.clients {
-		close(client.send)
-		client.conn.Close()
+	defer h.mu.Unlock()
+	if h.clients[c] {
+		delete(h.clients, c)
+		close(c.send)
 	}
-	h.mu.Unlock()
 }
 
 // Broadcast sends a JSON message to all connected clients.
@@ -124,9 +127,7 @@ func (c *wsClient) writePump() {
 
 func (c *wsClient) readPump(h *Hub) {
 	defer func() {
-		h.mu.Lock()
-		delete(h.clients, c)
-		h.mu.Unlock()
+		h.remove(c)
 		c.conn.Close()
 	}()
 
