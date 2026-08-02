@@ -247,25 +247,41 @@
     return state.gitStatuses[path] || '';
   }
 
-  // Get aggregate git status for a directory (most important child status)
-  function getDirGitStatus(entry) {
-    if (!entry.isDir) return getGitStatus(entry.path);
-    if (!entry.children) return '';
-    const priorities = { conflict: 5, modified: 4, untracked: 3, added: 2, staged: 1, deleted: 4 };
-    let best = '';
-    let bestPri = 0;
-    for (const child of entry.children) {
-      const s = getDirGitStatus(child);
-      if (s && (priorities[s] || 0) > bestPri) {
-        best = s;
-        bestPri = priorities[s] || 0;
-      }
+  // How much a git status stands out, used to pick what a directory shows
+  const statusPriority = { conflict: 5, modified: 4, deleted: 4, untracked: 3, added: 2, staged: 1 };
+
+  // What a directory row shows, by directory path. Collected in one pass per
+  // render rather than walking every subtree again for each row.
+  let dirSummaries = new Map();
+
+  // summarize walks a subtree once, recording for every directory the most
+  // important git status below it and whether it holds any comments.
+  function summarize(entry) {
+    if (!entry.isDir) {
+      const anns = state.allAnnotations[entry.path];
+      return { status: getGitStatus(entry.path), comments: !!(anns && Object.keys(anns).length > 0) };
     }
-    return best;
+
+    let status = '';
+    let comments = false;
+    for (const child of entry.children || []) {
+      const childSummary = summarize(child);
+      if ((statusPriority[childSummary.status] || 0) > (statusPriority[status] || 0)) {
+        status = childSummary.status;
+      }
+      comments = comments || childSummary.comments;
+    }
+
+    const summary = { status, comments };
+    dirSummaries.set(entry.path, summary);
+    return summary;
   }
 
   // Render file tree
   function renderTree() {
+    dirSummaries = new Map();
+    state.tree.forEach(summarize);
+
     const scrollTop = treePane.scrollTop;
     treeContainer.innerHTML = '';
     renderTreeLevel(state.tree, treeContainer, 0);
@@ -280,8 +296,8 @@
 
       if (entry.isDir) {
         const isOpen = state.openDirs[entry.path] || false;
-        const dirStatus = getDirGitStatus(entry);
-        if (dirStatus) item.classList.add('git-' + dirStatus);
+        const summary = dirSummaries.get(entry.path) || { status: '', comments: false };
+        if (summary.status) item.classList.add('git-' + summary.status);
 
         item.innerHTML = `
           <svg class="chevron ${isOpen ? 'open' : ''}"><use href="/static/assets/icons.svg#icon-chevron-right"/></svg>
@@ -289,8 +305,7 @@
           <span>${escapeHtml(entry.name)}</span>
         `;
 
-        const hasComments = entry.children && hasAnnotationsInTree(entry);
-        if (hasComments) {
+        if (summary.comments) {
           item.innerHTML += '<span class="comment-dot"></span>';
         }
 
@@ -328,14 +343,6 @@
         container.appendChild(item);
       }
     });
-  }
-
-  function hasAnnotationsInTree(entry) {
-    if (!entry.isDir) {
-      const anns = state.allAnnotations[entry.path];
-      return anns && Object.keys(anns).length > 0;
-    }
-    return entry.children && entry.children.some(c => hasAnnotationsInTree(c));
   }
 
   // Load the open file's content and annotations into the code view. The
