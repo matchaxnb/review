@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +20,15 @@ type Annotation struct {
 	Context     []string `json:"-"`        // stored context lines (without line-number prefix)
 	ContextFrom int      `json:"-"`        // first line number of context block
 	Outdated    bool     `json:"outdated"` // true if context no longer matches source
+}
+
+// equal reports whether two annotations describe the same comment on the same
+// piece of code.
+func (a *Annotation) equal(b *Annotation) bool {
+	return a.Comment == b.Comment &&
+		a.Outdated == b.Outdated &&
+		a.ContextFrom == b.ContextFrom &&
+		slices.Equal(a.Context, b.Context)
 }
 
 // Store holds annotations in memory and persists them to REVIEW.md.
@@ -76,7 +87,7 @@ func (s *Store) Set(file string, line int, comment string) error {
 	if s.data[file] == nil {
 		s.data[file] = make(map[int]*Annotation)
 	}
-	ann := &Annotation{Comment: comment}
+	ann := &Annotation{Comment: strings.TrimSpace(comment)}
 	if lines, err := readFileLines(s.srcRoot, file); err == nil {
 		ann.Context, ann.ContextFrom = contextAround(lines, line, ContextRadius)
 	}
@@ -165,18 +176,41 @@ func (s *Store) SrcRoot() string {
 	return s.srcRoot
 }
 
-// Reload re-reads REVIEW.md from disk and replaces in-memory data.
-func (s *Store) Reload() error {
+// Reload re-reads REVIEW.md from disk and replaces in-memory data. It reports
+// whether the file differs from what was already in memory, which tells a
+// write made by someone else from the store's own write being observed.
+func (s *Store) Reload() (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	data, started, err := parse(s.mdPath)
 	if err != nil {
-		return fmt.Errorf("parse REVIEW.md: %w", err)
+		return false, fmt.Errorf("parse REVIEW.md: %w", err)
 	}
+	changed := !equalAnnotations(s.data, data)
 	s.data = data
 	s.started = started
-	return nil
+	return changed, nil
+}
+
+// equalAnnotations reports whether two annotation maps hold the same review.
+func equalAnnotations(a, b map[string]map[int]*Annotation) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for file, aLines := range a {
+		bLines, ok := b[file]
+		if !ok || len(aLines) != len(bLines) {
+			return false
+		}
+		for line, aAnn := range aLines {
+			bAnn, ok := bLines[line]
+			if !ok || !aAnn.equal(bAnn) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Flush persists current state to REVIEW.md. Exported for use by drift detection.

@@ -183,9 +183,13 @@ func (w *Watcher) emitDebounced(key string, event Event) {
 				return // No actual drift — no need to notify frontend
 			}
 		} else if event.Type == "review-reloaded" {
-			if err := w.store.Reload(); err != nil {
+			changed, err := w.store.Reload()
+			if err != nil {
 				log.Printf("failed to reload REVIEW.md: %v", err)
 				return
+			}
+			if !changed {
+				return // our own write, or one that changed nothing
 			}
 		}
 
