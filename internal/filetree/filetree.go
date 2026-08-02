@@ -16,6 +16,10 @@ type Entry struct {
 	Children []*Entry `json:"children"`
 }
 
+// reviewFile is the annotation file the tool writes at the root of the
+// reviewed directory. It is not part of what is under review.
+const reviewFile = "REVIEW.md"
+
 // ignoredDirs are directory names never included in the tree. Version control
 // metadata directories are listed here because their contents are not source
 // code the user would review.
@@ -70,7 +74,7 @@ func gitLsFiles(root string) ([]string, error) {
 
 	var files []string
 	for _, path := range strings.Split(string(out), "\x00") {
-		if path == "" || path == "REVIEW.md" {
+		if path == "" || path == reviewFile {
 			continue
 		}
 		// Skip binary extensions
@@ -162,8 +166,8 @@ func walkDir(absDir, relDir string) ([]*Entry, error) {
 	for _, e := range entries {
 		name := e.Name()
 
-		// Skip REVIEW.md
-		if name == "REVIEW.md" {
+		// Skip the review's own file, but only the one at the root
+		if relDir == "" && name == reviewFile {
 			continue
 		}
 

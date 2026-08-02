@@ -223,3 +223,27 @@ func entryPaths(entries []*Entry) map[string]bool {
 	walk(entries)
 	return paths
 }
+
+// TestWalkKeepsNestedReviewFile verifies that only the review's own file at
+// the root is hidden, not a REVIEW.md that belongs to the project.
+func TestWalkKeepsNestedReviewFile(t *testing.T) {
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		"REVIEW.md":      "our own annotations",
+		"docs/REVIEW.md": "a document of the project",
+		"main.go":        "package main",
+	})
+
+	tree, err := walkDir(root, "")
+	if err != nil {
+		t.Fatalf("walkDir failed: %v", err)
+	}
+
+	names := entryPaths(tree)
+	if names["REVIEW.md"] {
+		t.Error("expected the root REVIEW.md to be excluded")
+	}
+	if !names["docs/REVIEW.md"] {
+		t.Errorf("expected docs/REVIEW.md in tree, got %v", names)
+	}
+}
