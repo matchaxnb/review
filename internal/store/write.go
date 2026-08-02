@@ -14,6 +14,10 @@ import (
 // startedFormat is the layout of the review's start date in REVIEW.md.
 const startedFormat = "2006-01-02"
 
+// maxLineLength bounds a single line when reading source or review files, so
+// that a generated or minified file is still read to the end.
+const maxLineLength = 1 << 20
+
 // serialize converts the annotation map to a markdown string. The context
 // blocks are written from the context stored with each annotation, which is
 // the code as it looked when the annotation was last in sync with the source.
@@ -108,6 +112,7 @@ func readFileLines(srcRoot, relPath string) ([]string, error) {
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineLength)
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}

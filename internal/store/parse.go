@@ -67,6 +67,7 @@ func parse(path string) (map[string]map[int]*Annotation, string, error) {
 	}
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineLength)
 	for scanner.Scan() {
 		line := scanner.Text()
 
