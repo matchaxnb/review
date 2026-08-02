@@ -44,7 +44,6 @@ type Hub struct {
 	clients   map[*wsClient]bool
 	mu        sync.RWMutex
 	broadcast chan []byte
-	done      chan struct{}
 	onMessage func(msg map[string]interface{}) // optional handler for client messages
 }
 
@@ -58,7 +57,6 @@ func NewHub() *Hub {
 	return &Hub{
 		clients:   make(map[*wsClient]bool),
 		broadcast: make(chan []byte, 64),
-		done:      make(chan struct{}),
 	}
 }
 
@@ -69,25 +67,20 @@ func (h *Hub) OnMessage(fn func(msg map[string]interface{})) {
 
 // Run starts the hub's broadcast loop.
 func (h *Hub) Run() {
-	for {
-		select {
-		case <-h.done:
-			return
-		case msg := <-h.broadcast:
-			var stalled []*wsClient
-			h.mu.RLock()
-			for client := range h.clients {
-				select {
-				case client.send <- msg:
-				default:
-					stalled = append(stalled, client)
-				}
+	for msg := range h.broadcast {
+		var stalled []*wsClient
+		h.mu.RLock()
+		for client := range h.clients {
+			select {
+			case client.send <- msg:
+			default:
+				stalled = append(stalled, client)
 			}
-			h.mu.RUnlock()
-			// Drop clients that cannot keep up, outside the read lock
-			for _, client := range stalled {
-				h.remove(client)
-			}
+		}
+		h.mu.RUnlock()
+		// Drop clients that cannot keep up, outside the read lock
+		for _, client := range stalled {
+			h.remove(client)
 		}
 	}
 }

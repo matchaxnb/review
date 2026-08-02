@@ -215,38 +215,3 @@ func classifyStatus(x, y byte) Status {
 	}
 	return StatusNone
 }
-
-// DirStatus computes an aggregate status for a directory path.
-// It returns the "most important" status of any file under that directory.
-func (fs FileStatuses) DirStatus(dirPath string) Status {
-	if fs == nil {
-		return StatusNone
-	}
-	prefix := dirPath + "/"
-	best := StatusNone
-	for path, status := range fs {
-		if strings.HasPrefix(path, prefix) || path == dirPath {
-			if statusPriority(status) > statusPriority(best) {
-				best = status
-			}
-		}
-	}
-	return best
-}
-
-func statusPriority(s Status) int {
-	switch s {
-	case StatusConflict:
-		return 5
-	case StatusModified:
-		return 4
-	case StatusUntracked:
-		return 3
-	case StatusAdded:
-		return 2
-	case StatusStaged:
-		return 1
-	default:
-		return 0
-	}
-}
