@@ -32,6 +32,18 @@ func newTestWatcher(t *testing.T) (*store.Store, *Watcher, string) {
 	return st, w, dir
 }
 
+// drainEvents consumes the events queued so far, so that a test only sees what
+// the change it makes itself produces.
+func drainEvents(w *Watcher) {
+	for {
+		select {
+		case <-w.Events():
+		case <-time.After(700 * time.Millisecond):
+			return
+		}
+	}
+}
+
 // TestOwnWriteIsNotReported verifies that saving a comment does not come back
 // as an external change to REVIEW.md.
 func TestOwnWriteIsNotReported(t *testing.T) {
@@ -147,17 +159,6 @@ func TestViewedFileIsReportedWithoutDrift(t *testing.T) {
 	}
 }
 
-// drainEvents consumes the events queued so far.
-func drainEvents(w *Watcher) {
-	for {
-		select {
-		case <-w.Events():
-		case <-time.After(700 * time.Millisecond):
-			return
-		}
-	}
-}
-
 // TestWatchFileDoesNotAccumulate verifies that browsing files leaves only the
 // directories that are still needed under watch.
 func TestWatchFileDoesNotAccumulate(t *testing.T) {
@@ -204,5 +205,27 @@ func TestWatchFileRejectsEscapingPaths(t *testing.T) {
 		if viewed := w.currentlyViewed(); viewed != "" {
 			t.Errorf("path %q was accepted as %q", path, viewed)
 		}
+	}
+}
+
+// TestNewFileIsReported verifies that a file appearing in a watched directory
+// tells clients their file tree is out of date.
+func TestNewFileIsReported(t *testing.T) {
+	_, w, dir := newTestWatcher(t)
+
+	w.WatchFile("a.go") // puts the root under watch
+	drainEvents(w)
+
+	if err := os.WriteFile(filepath.Join(dir, "new.go"), []byte("x\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case ev := <-w.Events():
+		if ev.Type != "tree-changed" {
+			t.Errorf("expected tree-changed, got %q", ev.Type)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("a new file was not reported")
 	}
 }

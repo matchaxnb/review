@@ -20,7 +20,6 @@
 
   let ws = null;
   let wsReconnectDelay = 1000;
-  let gitStatusTimer = null;
 
   // DOM references
   let treePane, treeContainer, codeContent, codeHeader, commentList, commentEditor,
@@ -46,7 +45,6 @@
     loadConfig();
     loadTree();
     loadAllAnnotations();
-    loadGitStatusNow();
     connectWebSocket();
 
     // Reposition scrollbar markers when code-content resizes
@@ -122,6 +120,7 @@
         }
         updateCommentCount();
         renderTree();
+        loadTreeSoon(); // the change may show up as a new git status
         break;
 
       case 'review-deleted':
@@ -141,8 +140,12 @@
         if (state.currentFile === msg.path) {
           refreshCurrentFile();
         }
-        // Also refresh git status and tree (file may have new diff status)
-        loadGitStatus();
+        loadTreeSoon(); // the change may show up as a new git status
+        break;
+
+      case 'tree-changed':
+        // A file appeared or went away
+        loadTreeSoon();
         break;
 
       case 'review-reloaded':
@@ -201,14 +204,28 @@
     }
   }
 
-  // Load file tree
+  // Load the file tree together with the git status it is coloured by, so the
+  // two are always drawn from the same view of the project.
   async function loadTree() {
     try {
-      state.tree = await api('GET', '/api/tree');
+      const [tree, gitStatuses] = await Promise.all([
+        api('GET', '/api/tree'),
+        api('GET', '/api/git-status'),
+      ]);
+      state.tree = tree;
+      state.gitStatuses = gitStatuses;
       renderTree();
     } catch (e) {
       console.error('Failed to load tree:', e);
     }
+  }
+
+  // Reload the tree after a change on disk, debounced so that a burst of
+  // changes does not run git once per file.
+  let treeReloadTimer = null;
+  function loadTreeSoon() {
+    if (treeReloadTimer) clearTimeout(treeReloadTimer);
+    treeReloadTimer = setTimeout(loadTree, 500);
   }
 
   // Load all annotations (for gutter dots and comment counts)
@@ -218,29 +235,6 @@
       updateCommentCount();
     } catch (e) {
       console.error('Failed to load annotations:', e);
-    }
-  }
-
-  // Load git status (debounced to avoid hammering git on rapid changes)
-  function loadGitStatus() {
-    if (gitStatusTimer) clearTimeout(gitStatusTimer);
-    gitStatusTimer = setTimeout(async () => {
-      try {
-        state.gitStatuses = await api('GET', '/api/git-status');
-        renderTree();
-      } catch (e) {
-        console.error('Failed to load git status:', e);
-      }
-    }, 500);
-  }
-
-  // Immediate git status load (for initial page load)
-  async function loadGitStatusNow() {
-    try {
-      state.gitStatuses = await api('GET', '/api/git-status');
-      renderTree();
-    } catch (e) {
-      console.error('Failed to load git status:', e);
     }
   }
 

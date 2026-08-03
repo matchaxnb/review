@@ -15,9 +15,14 @@ import (
 
 // Event represents a change detected by the watcher.
 type Event struct {
-	Type string `json:"type"`           // "file-changed", "review-deleted", "review-reloaded"
+	Type string `json:"type"`           // "file-changed", "source-changed", "tree-changed", "review-deleted", "review-reloaded"
 	Path string `json:"path,omitempty"` // relative path for file events
 }
+
+// treeDebounceKey groups file creations and removals under a single debounce
+// timer, as they all lead to the same refresh. The NUL byte keeps the key from
+// colliding with a path.
+const treeDebounceKey = "\x00tree"
 
 // Watcher monitors annotated source files and REVIEW.md for changes.
 type Watcher struct {
@@ -176,21 +181,27 @@ func (w *Watcher) loop() {
 			}
 
 			// Is this a source file we care about?
-			if ev.Has(fsnotify.Write) || ev.Has(fsnotify.Create) || ev.Has(fsnotify.Remove) || ev.Has(fsnotify.Rename) {
-				relPath, err := filepath.Rel(srcRoot, absPath)
-				if err != nil {
-					continue
-				}
-				// Check if this file has annotations
-				anns := w.store.GetFile(relPath)
-				if len(anns) > 0 {
-					w.emitDebounced(absPath, Event{Type: "file-changed", Path: relPath})
-					continue
-				}
-				// Check if this is the file the client is looking at
-				if relPath == w.currentlyViewed() {
-					w.emitDebounced(absPath, Event{Type: "source-changed", Path: relPath})
-				}
+			if !ev.Has(fsnotify.Write) && !ev.Has(fsnotify.Create) && !ev.Has(fsnotify.Remove) && !ev.Has(fsnotify.Rename) {
+				continue
+			}
+			relPath, err := filepath.Rel(srcRoot, absPath)
+			if err != nil {
+				continue
+			}
+
+			// A file appearing or going away changes the tree the client shows
+			if ev.Has(fsnotify.Create) || ev.Has(fsnotify.Remove) || ev.Has(fsnotify.Rename) {
+				w.emitDebounced(treeDebounceKey, Event{Type: "tree-changed"})
+			}
+
+			// Check if this file has annotations
+			if anns := w.store.GetFile(relPath); len(anns) > 0 {
+				w.emitDebounced(absPath, Event{Type: "file-changed", Path: relPath})
+				continue
+			}
+			// Check if this is the file the client is looking at
+			if relPath == w.currentlyViewed() {
+				w.emitDebounced(absPath, Event{Type: "source-changed", Path: relPath})
 			}
 
 		case err, ok := <-w.fsw.Errors:
