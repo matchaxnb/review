@@ -21,6 +21,7 @@
 
   let ws = null;
   let wsReconnectDelay = 1000;
+  let shuttingDown = false;
 
   // DOM references
   let treePane, treeContainer, codeContent, codeHeader, commentList, commentEditor,
@@ -84,6 +85,9 @@
     };
 
     ws.onclose = () => {
+      // The server said it was going away, so there is nothing to reconnect to
+      if (shuttingDown) return;
+
       state.wsConnected = false;
       updateWsIndicator();
       // Reconnect with exponential backoff
@@ -167,6 +171,7 @@
 
       case 'server-shutdown':
         // Server is shutting down — close the tab
+        shuttingDown = true;
         document.title = 'Review — closed';
         window.close();
         // Fallback if window.close() is blocked by browser policy
