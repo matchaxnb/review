@@ -1,9 +1,7 @@
 package store
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -59,12 +57,10 @@ func serialize(data map[string]map[int]*Annotation, started string) string {
 			} else {
 				b.WriteString(fmt.Sprintf("\n#### Line %d\n\n", lineNum))
 			}
-			b.WriteString(ann.Comment)
-			b.WriteString("\n")
+			b.WriteString(escapeComment(ann.Comment))
 
 			if len(ann.Context) > 0 {
-				lang := detectLang(filePath)
-				b.WriteString(fmt.Sprintf("\n```%s\n", lang))
+				b.WriteString(fmt.Sprintf("\n```%s\n", contextFenceInfo(filePath)))
 				b.WriteString(formatContext(ann.Context, ann.ContextFrom))
 				b.WriteString("```\n")
 			}
@@ -72,6 +68,41 @@ func serialize(data map[string]map[int]*Annotation, started string) string {
 	}
 
 	return b.String()
+}
+
+// escapeComment writes a comment as the reviewer wrote it. Only a line that
+// would be read back as one of the document's own headings is prefixed with a
+// backslash, which markdown renders as the plain text that was meant. Lines
+// inside the comment's own code fences are left alone, as nothing in them is
+// read as structure.
+func escapeComment(comment string) string {
+	var b strings.Builder
+	fence := ""
+	for _, line := range strings.Split(comment, "\n") {
+		if fence != "" {
+			if closesFence(line, fence) {
+				fence = ""
+			}
+		} else if marker := fenceMarker(line); marker != "" {
+			fence = marker
+		} else if looksStructural(line) {
+			b.WriteString(`\`)
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// contextFenceInfo is the info string of a context block's fence: the file's
+// language, so the block is highlighted wherever the review is rendered,
+// followed by the marker that tells it from a code sample in a comment.
+// Renderers take the language from the first word and ignore the rest.
+func contextFenceInfo(filePath string) string {
+	if lang := detectLang(filePath); lang != "" {
+		return lang + " " + contextMarker
+	}
+	return contextMarker
 }
 
 // formatContext renders stored context lines with their line numbers, the form
@@ -103,20 +134,7 @@ func contextAround(lines []string, lineNum, radius int) ([]string, int) {
 
 // readFileLines reads all lines from a source file and returns them (0-indexed).
 func readFileLines(srcRoot, relPath string) ([]string, error) {
-	absPath := filepath.Join(srcRoot, relPath)
-	f, err := os.Open(absPath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineLength)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	return lines, scanner.Err()
+	return readLines(filepath.Join(srcRoot, relPath))
 }
 
 // detectLang returns a language identifier for the code fence.
