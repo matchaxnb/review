@@ -22,7 +22,7 @@ The tool was vibecoded as a simple way to review agentic coded files. The markdo
 
 ## Building
 
-Requires **Go 1.24+**.
+Requires **Go 1.25+**.
 
 ```sh
 go build -o review .
