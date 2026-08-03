@@ -14,7 +14,6 @@
     diffDeletions: [],    // [{afterLine, hunkIndex}] for current file
     totalLines: 0,        // number of lines in the current file
     editingLine: null,
-    editingText: '',
     gitStatuses: {},
     wsConnected: false,
   };
@@ -121,7 +120,7 @@
         // The file being viewed reloads, which is feedback enough. Any other
         // file only shows up as a notice.
         if (state.currentFile === msg.path) {
-          refreshCurrentFile();
+          refreshCurrentFile(msg.annotations);
         } else {
           showToast('File changed: ' + msg.path);
         }
@@ -155,19 +154,22 @@
         loadTreeSoon();
         break;
 
-      case 'review-reloaded':
+      case 'review-reloaded': {
         showToast('REVIEW.md reloaded from disk');
+        let current;
         if (msg.allAnnotations) {
           state.allAnnotations = msg.allAnnotations;
+          current = msg.allAnnotations[state.currentFile] || {};
         } else {
           loadAllAnnotations();
         }
         if (state.currentFile) {
-          refreshCurrentFile();
+          refreshCurrentFile(current);
         }
         updateCommentCount();
         renderTree();
         break;
+      }
 
       case 'server-shutdown':
         // Server is shutting down — close the tab
@@ -367,14 +369,14 @@
 
   // Load the open file's content and annotations into the code view. The
   // scroll position is kept so a reload after a change stays where you were.
-  async function loadCurrentFile() {
+  async function loadCurrentFile(annotations) {
     const path = state.currentFile;
     if (!path) return;
 
     const scrollTop = codeContent.scrollTop;
     const [fileData, annData] = await Promise.all([
       api('GET', '/api/file?path=' + encodeURIComponent(path)),
-      api('GET', '/api/annotations?path=' + encodeURIComponent(path)),
+      annotations || api('GET', '/api/annotations?path=' + encodeURIComponent(path)),
     ]);
     // Another file was opened while this one was loading
     if (state.currentFile !== path) return;
@@ -395,10 +397,11 @@
     renderCommentList();
   }
 
-  // Reload the open file after it changed on disk
-  async function refreshCurrentFile() {
+  // Reload the open file after it changed on disk. Annotations that came with
+  // the change are passed on rather than asked for a second time.
+  async function refreshCurrentFile(annotations) {
     try {
-      await loadCurrentFile();
+      await loadCurrentFile(annotations);
     } catch (e) {
       console.error('Failed to refresh file:', e);
     }
@@ -407,8 +410,7 @@
   // Open a file from the tree
   async function openFile(path) {
     state.currentFile = path;
-    state.editingLine = null;
-    updateEditorVisibility();
+    closeEditor();
 
     // Tell server to watch this file for changes
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -595,10 +597,9 @@
 
     state.editingLine = lineNum;
     const ann = state.annotations[lineNum];
-    state.editingText = ann ? ann.comment : '';
 
     editorLineLabel.textContent = 'Line ' + lineNum;
-    editorTextarea.value = state.editingText;
+    editorTextarea.value = ann ? ann.comment : '';
     updateEditorVisibility();
     editorTextarea.focus();
   }
@@ -629,14 +630,9 @@
         lineEl.classList.remove('has-outdated-comment');
       }
 
-      state.editingLine = null;
-      updateEditorVisibility();
-      renderCommentList();
-      renderScrollbarMarkers();
-      renderTree();
-      updateCommentCount();
+      annotationsChanged();
     } catch (e) {
-      alert('Failed to save: ' + e.message);
+      showToast('Failed to save: ' + e.message, true);
     }
   }
 
@@ -665,22 +661,26 @@
         lineEl.classList.remove('has-outdated-comment');
       }
 
-      state.editingLine = null;
-      updateEditorVisibility();
-      renderCommentList();
-      renderScrollbarMarkers();
-      renderTree();
-      updateCommentCount();
+      annotationsChanged();
     } catch (e) {
-      alert('Failed to delete: ' + e.message);
+      showToast('Failed to delete: ' + e.message, true);
     }
   }
 
-  // Cancel editing
-  function cancelEdit() {
+  // Put the editor away, leaving no line marked as being commented on.
+  function closeEditor() {
     state.editingLine = null;
     selectLine(null);
     updateEditorVisibility();
+  }
+
+  // Bring everything that shows annotations back in line after one changed.
+  function annotationsChanged() {
+    closeEditor();
+    renderCommentList();
+    renderScrollbarMarkers();
+    renderTree();
+    updateCommentCount();
   }
 
   // Render comment list in sidebar
@@ -825,18 +825,14 @@
       await api('DELETE', '/api/review');
       state.allAnnotations = {};
       state.annotations = {};
-      state.editingLine = null;
-      updateEditorVisibility();
-      updateCommentCount();
-      renderCommentList();
-      renderTree();
+      annotationsChanged();
       showToast('New review started');
     } catch (e) {
-      alert('Failed to start new review: ' + e.message);
+      showToast('Failed to start new review: ' + e.message, true);
     }
   }
 
   // Expose functions for inline handlers
-  window.app = { saveComment, deleteComment, cancelEdit, newReview };
+  window.app = { saveComment, deleteComment, closeEditor, newReview };
 
 })();

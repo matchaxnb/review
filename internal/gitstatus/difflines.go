@@ -35,10 +35,11 @@ type FileDiffInfo struct {
 	Deletions []DiffDeletion
 }
 
-// DiffDeletion represents a block of lines deleted between two lines in the new file.
+// DiffDeletion marks a block of lines deleted between two lines of the new
+// file. How many were removed is not recorded: the hunk the marker points at
+// shows them.
 type DiffDeletion struct {
 	AfterLine int `json:"afterLine"` // deletion sits after this line (0 = top of file)
-	Count     int `json:"count"`     // number of lines deleted
 	HunkIndex int `json:"hunkIndex"` // index into DiffHunks for tooltip
 }
 
@@ -124,7 +125,6 @@ func parseDiff(out []byte) *FileDiffInfo {
 			}
 			info.Deletions = append(info.Deletions, DiffDeletion{
 				AfterLine: after,
-				Count:     removed,
 				HunkIndex: len(info.Hunks),
 			})
 			removed = 0

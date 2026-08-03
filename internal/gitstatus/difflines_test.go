@@ -140,7 +140,7 @@ func TestParseDiff_Deletions(t *testing.T) {
  keep3
 `,
 			want: []DiffDeletion{
-				{AfterLine: 2, Count: 3, HunkIndex: 0},
+				{AfterLine: 2, HunkIndex: 0},
 			},
 		},
 		{
@@ -166,7 +166,7 @@ func TestParseDiff_Deletions(t *testing.T) {
  keep2
 `,
 			want: []DiffDeletion{
-				{AfterLine: 0, Count: 2, HunkIndex: 0},
+				{AfterLine: 0, HunkIndex: 0},
 			},
 		},
 		{
@@ -188,8 +188,8 @@ func TestParseDiff_Deletions(t *testing.T) {
 -removed3
 `,
 			want: []DiffDeletion{
-				{AfterLine: 3, Count: 1, HunkIndex: 0},
-				{AfterLine: 9, Count: 2, HunkIndex: 1},
+				{AfterLine: 3, HunkIndex: 0},
+				{AfterLine: 9, HunkIndex: 1},
 			},
 		},
 	}
@@ -269,7 +269,7 @@ func TestGetFileDiff_AgainstGit(t *testing.T) {
 	if len(info.Deletions) != 1 {
 		t.Fatalf("expected 1 deletion, got %+v", info.Deletions)
 	}
-	if info.Deletions[0].AfterLine != 3 || info.Deletions[0].Count != 2 {
+	if info.Deletions[0].AfterLine != 3 {
 		t.Errorf("deletion: got %+v, want after line 3, count 2", info.Deletions[0])
 	}
 	if info.Deletions[0].HunkIndex < 0 || info.Deletions[0].HunkIndex >= len(info.Hunks) {
