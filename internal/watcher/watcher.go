@@ -220,14 +220,16 @@ func (w *Watcher) emitDebounced(key string, event Event) {
 			if !drifted && event.Path != w.currentlyViewed() {
 				return
 			}
-		} else if event.Type == "review-reloaded" {
+		} else if event.Type == "review-reloaded" || event.Type == "review-deleted" {
+			// A missing REVIEW.md reads as an empty review, so a deletion is
+			// told from the tool's own by the same comparison as a write.
 			changed, err := w.store.Reload()
 			if err != nil {
 				log.Printf("failed to reload REVIEW.md: %v", err)
 				return
 			}
 			if !changed {
-				return // our own write, or one that changed nothing
+				return // our own change, or one that changed nothing
 			}
 		}
 

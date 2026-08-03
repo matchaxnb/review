@@ -68,6 +68,55 @@ func TestForeignWriteIsReported(t *testing.T) {
 	}
 }
 
+// TestOwnDeletionIsNotReported verifies that starting a new review, which
+// removes REVIEW.md, does not come back as annotations lost behind our back.
+func TestOwnDeletionIsNotReported(t *testing.T) {
+	st, w, _ := newTestWatcher(t)
+
+	if err := st.Set("a.go", 2, "a comment"); err != nil {
+		t.Fatal(err)
+	}
+	drainEvents(w)
+
+	// What the "New Review" endpoint does
+	if err := os.Remove(st.MdPath()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case ev := <-w.Events():
+		t.Errorf("own deletion reported as %q", ev.Type)
+	case <-time.After(1500 * time.Millisecond):
+	}
+}
+
+// TestForeignDeletionIsReported verifies that losing REVIEW.md to something
+// else is still reported.
+func TestForeignDeletionIsReported(t *testing.T) {
+	st, w, _ := newTestWatcher(t)
+
+	if err := st.Set("a.go", 2, "a comment"); err != nil {
+		t.Fatal(err)
+	}
+	drainEvents(w)
+
+	if err := os.Remove(st.MdPath()); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case ev := <-w.Events():
+		if ev.Type != "review-deleted" {
+			t.Errorf("expected review-deleted, got %q", ev.Type)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("deletion of REVIEW.md was not reported")
+	}
+}
+
 // TestViewedFileIsReportedWithoutDrift verifies that an edit to the file a
 // client has open is passed on even when it leaves every annotation in place.
 func TestViewedFileIsReportedWithoutDrift(t *testing.T) {
