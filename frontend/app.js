@@ -276,15 +276,33 @@
     return summary;
   }
 
+  // The sprite the tree's icons come from
+  const icons = '/static/assets/icons.svg';
+
+  // The row of each rendered path, so that a single row can be reached without
+  // searching the tree for it, and the row marked as the open file.
+  let treeRows = new Map();
+  let activeRow = null;
+
   // Render file tree
   function renderTree() {
     dirSummaries = new Map();
     state.tree.forEach(summarize);
 
     const scrollTop = treePane.scrollTop;
+    treeRows = new Map();
+    activeRow = null;
     treeContainer.innerHTML = '';
     renderTreeLevel(state.tree, treeContainer, 0);
     treePane.scrollTop = scrollTop;
+  }
+
+  // Move the marking for the open file, which is all that opening one changes
+  // about the tree.
+  function setActiveFile(path) {
+    if (activeRow) activeRow.classList.remove('active');
+    activeRow = treeRows.get(path) || null;
+    if (activeRow) activeRow.classList.add('active');
   }
 
   function renderTreeLevel(entries, container, depth) {
@@ -292,21 +310,18 @@
       const item = document.createElement('div');
       item.className = 'tree-item';
       item.style.paddingLeft = (0.5 + depth * 1) + 'rem';
+      treeRows.set(entry.path, item);
 
       if (entry.isDir) {
         const isOpen = state.openDirs[entry.path] || false;
         const summary = dirSummaries.get(entry.path) || { status: '', comments: false };
         if (summary.status) item.classList.add('git-' + summary.status);
 
-        item.innerHTML = `
-          <svg class="chevron ${isOpen ? 'open' : ''}"><use href="/static/assets/icons.svg#icon-chevron-right"/></svg>
-          <svg><use href="/static/assets/icons.svg#icon-folder${isOpen ? '-open' : ''}"/></svg>
-          <span>${escapeHtml(entry.name)}</span>
-        `;
-
-        if (summary.comments) {
-          item.innerHTML += '<span class="comment-dot"></span>';
-        }
+        item.innerHTML =
+          `<svg class="chevron${isOpen ? ' open' : ''}"><use href="${icons}#icon-chevron-right"/></svg>` +
+          `<svg><use href="${icons}#icon-folder${isOpen ? '-open' : ''}"/></svg>` +
+          `<span>${escapeHtml(entry.name)}</span>` +
+          (summary.comments ? '<span class="comment-dot"></span>' : '');
 
         item.addEventListener('click', () => {
           state.openDirs[entry.path] = !state.openDirs[entry.path];
@@ -328,14 +343,15 @@
         const fileStatus = getGitStatus(entry.path);
         if (fileStatus) item.classList.add('git-' + fileStatus);
 
-        item.innerHTML = `
-          <svg><use href="/static/assets/icons.svg#icon-file"/></svg>
-          <span>${escapeHtml(entry.name)}</span>
-          ${hasOutdated ? '<span class="comment-dot outdated-dot"></span>' : hasComments ? '<span class="comment-dot"></span>' : ''}
-        `;
+        item.innerHTML =
+          `<svg><use href="${icons}#icon-file"/></svg>` +
+          `<span>${escapeHtml(entry.name)}</span>` +
+          (hasOutdated ? '<span class="comment-dot outdated-dot"></span>'
+            : hasComments ? '<span class="comment-dot"></span>' : '');
 
         if (state.currentFile === entry.path) {
           item.classList.add('active');
+          activeRow = item;
         }
 
         item.addEventListener('click', () => openFile(entry.path));
@@ -399,7 +415,7 @@
       <span class="lang-badge">loading...</span>
     `;
     codeContent.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
-    renderTree(); // update active state
+    setActiveFile(path);
 
     try {
       await loadCurrentFile();
