@@ -20,7 +20,17 @@ const (
 	pingPeriod = 45 * time.Second
 	// writeWait is the time allowed for writing a single message.
 	writeWait = 10 * time.Second
+	// readLimit bounds a message from a client. Clients only ever send the path
+	// of the file they are looking at, so this leaves room for the longest path
+	// the filesystem allows and nothing more.
+	readLimit = 4096
 )
+
+// clientMessage is a message sent by a client.
+type clientMessage struct {
+	Type string `json:"type"` // "watch-file"
+	Path string `json:"path"` // file the client is looking at
+}
 
 // upgrader accepts connections from the page the server itself serves. Any
 // site a user visits could otherwise open a socket to the local review and
@@ -44,7 +54,7 @@ type Hub struct {
 	clients   map[*wsClient]bool
 	mu        sync.RWMutex
 	broadcast chan []byte
-	onMessage func(msg map[string]interface{}) // optional handler for client messages
+	onMessage func(msg clientMessage) // optional handler for client messages
 }
 
 type wsClient struct {
@@ -60,9 +70,19 @@ func NewHub() *Hub {
 	}
 }
 
-// OnMessage sets a handler for client→server messages.
-func (h *Hub) OnMessage(fn func(msg map[string]interface{})) {
+// handle sets the handler for client→server messages.
+func (h *Hub) handle(fn func(msg clientMessage)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.onMessage = fn
+}
+
+// messageHandler returns the handler for client→server messages, or nil when
+// none is set.
+func (h *Hub) messageHandler() func(msg clientMessage) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.onMessage
 }
 
 // Run starts the hub's broadcast loop.
@@ -166,7 +186,7 @@ func (c *wsClient) readPump(h *Hub) {
 		c.conn.Close()
 	}()
 
-	c.conn.SetReadLimit(512)
+	c.conn.SetReadLimit(readLimit)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
 		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -177,11 +197,13 @@ func (c *wsClient) readPump(h *Hub) {
 		if err != nil {
 			return
 		}
-		if h.onMessage != nil {
-			var msg map[string]interface{}
-			if json.Unmarshal(data, &msg) == nil {
-				h.onMessage(msg)
-			}
+		handler := h.messageHandler()
+		if handler == nil {
+			continue
+		}
+		var msg clientMessage
+		if json.Unmarshal(data, &msg) == nil {
+			handler(msg)
 		}
 	}
 }

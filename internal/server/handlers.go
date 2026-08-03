@@ -93,18 +93,18 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, resp)
 }
 
-// AnnotationResponse is the JSON shape of a single annotation.
-type AnnotationResponse struct {
+// annotationResponse is the JSON shape of a single annotation.
+type annotationResponse struct {
 	Comment  string `json:"comment"`
 	Outdated bool   `json:"outdated"`
 }
 
-// FileAnnotations converts one file's annotations into the shape clients
+// fileAnnotations converts one file's annotations into the shape clients
 // receive, keyed by line number.
-func FileAnnotations(anns map[int]*store.Annotation) map[string]AnnotationResponse {
-	result := make(map[string]AnnotationResponse, len(anns))
+func fileAnnotations(anns map[int]*store.Annotation) map[string]annotationResponse {
+	result := make(map[string]annotationResponse, len(anns))
 	for line, ann := range anns {
-		result[strconv.Itoa(line)] = AnnotationResponse{
+		result[strconv.Itoa(line)] = annotationResponse{
 			Comment:  ann.Comment,
 			Outdated: ann.Outdated,
 		}
@@ -112,12 +112,12 @@ func FileAnnotations(anns map[int]*store.Annotation) map[string]AnnotationRespon
 	return result
 }
 
-// AllAnnotations converts the annotations of every file into the shape clients
+// allAnnotations converts the annotations of every file into the shape clients
 // receive, keyed by file path.
-func AllAnnotations(all map[string]map[int]*store.Annotation) map[string]map[string]AnnotationResponse {
-	result := make(map[string]map[string]AnnotationResponse, len(all))
+func allAnnotations(all map[string]map[int]*store.Annotation) map[string]map[string]annotationResponse {
+	result := make(map[string]map[string]annotationResponse, len(all))
 	for file, lines := range all {
-		result[file] = FileAnnotations(lines)
+		result[file] = fileAnnotations(lines)
 	}
 	return result
 }
@@ -125,10 +125,10 @@ func AllAnnotations(all map[string]map[int]*store.Annotation) map[string]map[str
 func (h *handlers) handleGetAnnotations(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
-		jsonResponse(w, AllAnnotations(h.store.All()))
+		jsonResponse(w, allAnnotations(h.store.All()))
 		return
 	}
-	jsonResponse(w, FileAnnotations(h.store.GetFile(path)))
+	jsonResponse(w, fileAnnotations(h.store.GetFile(path)))
 }
 
 type annotationRequest struct {

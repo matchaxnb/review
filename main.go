@@ -72,39 +72,12 @@ func main() {
 	go hub.Run()
 
 	// Set up file watcher
-	w, err := watcher.New(st)
-	if err != nil {
+	if w, err := watcher.New(st); err != nil {
 		log.Printf("Warning: file watching disabled: %v", err)
 	} else {
 		w.Start()
 		defer w.Stop()
-
-		// Let clients register files to watch (currently viewed file)
-		hub.OnMessage(func(msg map[string]interface{}) {
-			if msg["type"] == "watch-file" {
-				if path, ok := msg["path"].(string); ok && path != "" {
-					w.WatchFile(path)
-				}
-			}
-		})
-
-		// Bridge watcher events to WebSocket hub
-		go func() {
-			for ev := range w.Events() {
-				// Build message with current annotation state
-				msg := map[string]interface{}{
-					"type": ev.Type,
-				}
-				if ev.Path != "" {
-					msg["path"] = ev.Path
-					msg["annotations"] = server.FileAnnotations(st.GetFile(ev.Path))
-				}
-				if ev.Type == "review-reloaded" {
-					msg["allAnnotations"] = server.AllAnnotations(st.All())
-				}
-				hub.Broadcast(msg)
-			}
-		}()
+		server.BridgeWatcher(hub, st, w)
 	}
 
 	handler := server.New(st, rootDir, baseCommit, subFS, hub)
@@ -131,7 +104,7 @@ func main() {
 	go func() {
 		<-sigCh
 		log.Println("Shutting down...")
-		hub.Broadcast(map[string]string{"type": "server-shutdown"})
+		hub.Shutdown()
 		time.Sleep(200 * time.Millisecond) // give WS time to deliver
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
