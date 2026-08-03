@@ -4,10 +4,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
+	"review/internal/safepath"
 	"review/internal/store"
 
 	"github.com/fsnotify/fsnotify"
@@ -82,7 +82,7 @@ func (w *Watcher) Stop() {
 // file is watched at a time, and only inside the reviewed directory: the path
 // comes from the client and is not to be trusted.
 func (w *Watcher) WatchFile(relPath string) {
-	if !within(w.store.SrcRoot(), relPath) {
+	if _, ok := safepath.Resolve(w.store.SrcRoot(), relPath); !ok {
 		return
 	}
 
@@ -132,15 +132,6 @@ func (w *Watcher) syncWatches() {
 		}
 		w.watched[dir] = true
 	}
-}
-
-// within reports whether a relative path stays inside root.
-func within(root, relPath string) bool {
-	if relPath == "" {
-		return false
-	}
-	rel, err := filepath.Rel(root, filepath.Join(root, relPath))
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (w *Watcher) loop() {

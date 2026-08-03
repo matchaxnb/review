@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"review/internal/filetree"
 	"review/internal/gitstatus"
 	"review/internal/highlight"
+	"review/internal/safepath"
 	"review/internal/store"
 )
 
@@ -242,18 +242,9 @@ func isBinary(content []byte) bool {
 	return bytes.IndexByte(content, 0) >= 0
 }
 
-// resolvePath joins a client-supplied relative path against the review root and
-// verifies the result stays within it. It returns the cleaned absolute path and
-// true when safe. Unlike a naive ".." substring check, this accepts legitimate
-// filenames that merely contain ".." (such as "[...slug].astro") while still
-// rejecting traversal attempts that escape the root.
+// resolvePath resolves a client-supplied relative path against the review root.
 func (h *handlers) resolvePath(path string) (string, bool) {
-	absPath := filepath.Join(h.rootDir, path)
-	rel, err := filepath.Rel(h.rootDir, absPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	return absPath, true
+	return safepath.Resolve(h.rootDir, path)
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}) {
