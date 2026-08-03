@@ -212,9 +212,8 @@ func (w *Watcher) emitDebounced(key string, event Event) {
 		t.Stop()
 	}
 
-	var timer *time.Timer
-	timer = time.AfterFunc(500*time.Millisecond, func() {
-		defer w.forget(key, timer)
+	w.debounce[key] = time.AfterFunc(500*time.Millisecond, func() {
+		defer w.forget(key)
 
 		// For file-changed events, run drift detection first
 		if event.Type == "file-changed" {
@@ -247,16 +246,15 @@ func (w *Watcher) emitDebounced(key string, event Event) {
 			// Channel full — drop event
 		}
 	})
-	w.debounce[key] = timer
 }
 
-// forget drops a timer that has fired, unless a later event has already put
-// another one in its place.
-func (w *Watcher) forget(key string, t *time.Timer) {
+// forget drops the timer for a key once it has fired, so that keys do not pile
+// up for changes that turned out not to be worth reporting. A change arriving
+// for the same key while this runs loses the chance to have its predecessor
+// cancelled, and is reported on its own.
+func (w *Watcher) forget(key string) {
 	w.debounceMu.Lock()
 	defer w.debounceMu.Unlock()
 
-	if w.debounce[key] == t {
-		delete(w.debounce, key)
-	}
+	delete(w.debounce, key)
 }
