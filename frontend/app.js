@@ -729,11 +729,12 @@
     statusCommentCount.textContent = count + ' comment' + (count !== 1 ? 's' : '');
   }
 
-  // Escape HTML
+  // Escape HTML. Replacing the few characters that matter is a fraction of the
+  // cost of routing the text through a throwaway element, and this runs for
+  // every tree row, every comment and every line of a diff tooltip.
+  const htmlEscapes = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return String(str).replace(/[&<>"']/g, ch => htmlEscapes[ch]);
   }
 
   // Diff tooltip
@@ -786,11 +787,14 @@
     // guard is used instead of the gutter's mouseleave: the tooltip now sits
     // under the cursor (covering the gutter), so relying on the gutter would
     // hide it immediately and loop.
+    //
+    // The tooltip stays where it was put, so its bounds are measured once here
+    // rather than on every movement of the pointer, which would force the
+    // browser to work out the page's layout again each time.
+    const bounds = diffTooltip.getBoundingClientRect();
     diffTooltipMoveHandler = (e) => {
-      if (!diffTooltip) return;
-      const r = diffTooltip.getBoundingClientRect();
-      if (e.clientX < r.left || e.clientX > r.right ||
-          e.clientY < r.top || e.clientY > r.bottom) {
+      if (e.clientX < bounds.left || e.clientX > bounds.right ||
+          e.clientY < bounds.top || e.clientY > bounds.bottom) {
         hideDiffTooltip();
       }
     };
