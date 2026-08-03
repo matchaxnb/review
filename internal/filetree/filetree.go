@@ -10,10 +10,11 @@ import (
 
 // Entry represents a file or directory in the tree.
 type Entry struct {
-	Name     string   `json:"name"`
-	Path     string   `json:"path"`
-	IsDir    bool     `json:"isDir"`
-	Children []*Entry `json:"children"`
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	IsDir bool   `json:"isDir"`
+	// Children is omitted for files, which make up the bulk of a tree.
+	Children []*Entry `json:"children,omitempty"`
 }
 
 // reviewFile is the annotation file the tool writes at the root of the

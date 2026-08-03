@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // LineChange represents the type of change for a line.
@@ -100,11 +101,18 @@ func parseDiff(out []byte) *FileDiffInfo {
 	scanner.Buffer(make([]byte, 0, 64*1024), maxDiffLine)
 
 	var (
-		current   *DiffHunk // hunk being read
-		newLine   int       // next line number in the new file
-		removed   int       // removed lines seen since the last unchanged line
-		replacing bool      // the run of added lines replaces removed ones
+		current   *DiffHunk       // hunk being read
+		body      strings.Builder // raw diff text of the hunk being read
+		newLine   int             // next line number in the new file
+		removed   int             // removed lines seen since the last unchanged line
+		replacing bool            // the run of added lines replaces removed ones
 	)
+
+	// keep records a line as part of the hunk being read.
+	keep := func(line string) {
+		body.WriteString(line)
+		body.WriteByte('\n')
+	}
 
 	// endRun closes a run of removed lines, recording a deletion marker for
 	// those that nothing was put in place of.
@@ -130,6 +138,8 @@ func parseDiff(out []byte) *FileDiffInfo {
 			return
 		}
 		endRun()
+		current.Diff = body.String()
+		body.Reset()
 		info.Hunks = append(info.Hunks, *current)
 		current = nil
 	}
@@ -164,7 +174,7 @@ func parseDiff(out []byte) *FileDiffInfo {
 		if line == "" {
 			// An unchanged empty line is written without its leading space
 			endRun()
-			current.Diff += "\n"
+			keep("")
 			newLine++
 			continue
 		}
@@ -172,14 +182,14 @@ func parseDiff(out []byte) *FileDiffInfo {
 		switch line[0] {
 		case ' ':
 			endRun()
-			current.Diff += line + "\n"
+			keep(line)
 			newLine++
 		case '-':
 			if replacing {
 				endRun() // a new run of changes starts
 			}
 			removed++
-			current.Diff += line + "\n"
+			keep(line)
 		case '+':
 			if removed > 0 {
 				replacing = true
@@ -190,11 +200,11 @@ func parseDiff(out []byte) *FileDiffInfo {
 			} else {
 				mark(LineAdded)
 			}
-			current.Diff += line + "\n"
+			keep(line)
 			newLine++
 		case '\\':
 			// "\ No newline at end of file"
-			current.Diff += line + "\n"
+			keep(line)
 		default:
 			endHunk()
 		}

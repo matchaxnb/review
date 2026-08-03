@@ -76,13 +76,6 @@ func ResolveBase(dir, rev string) (Base, error) {
 // commit set, files are reported by how they differ from that commit instead of
 // from HEAD. Returns nil if the directory is not a git repository.
 func Get(dir string, base Base) FileStatuses {
-	// Check if this is a git repo
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
-		return nil
-	}
-
 	if base.Commit != "" {
 		return statusesSince(dir, base)
 	}
@@ -91,7 +84,9 @@ func Get(dir string, base Base) FileStatuses {
 	// (e.g. umlauts) unquoted so they match the paths reported by the file tree.
 	// Untracked files are listed individually because the file tree shows them
 	// individually too; a collapsed directory entry would match none of them.
-	cmd = exec.Command("git", "-c", "core.quotepath=false", "status", "--porcelain", "-uall")
+	// A directory that is no git repository fails here, which is the answer a
+	// separate check would have given.
+	cmd := exec.Command("git", "-c", "core.quotepath=false", "status", "--porcelain", "-uall")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
