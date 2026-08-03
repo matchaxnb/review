@@ -5,11 +5,17 @@ import (
 	"net/http"
 
 	"review/internal/gitstatus"
+	"review/internal/highlight"
 	"review/internal/store"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
+
+// highlightCacheSize is how much highlighted HTML is kept in memory to serve
+// files that are opened again. Highlighting expands source several times over,
+// so this holds a good number of ordinary files.
+const highlightCacheSize = 32 << 20 // 32 MiB
 
 // New creates and returns the HTTP handler.
 // frontendFS should be the embedded frontend filesystem (already sub'd to the frontend root).
@@ -21,9 +27,10 @@ func New(st *store.Store, rootDir string, base gitstatus.Base, frontendFS fs.FS,
 	r.Use(middleware.Recoverer)
 
 	h := &handlers{
-		store:   st,
-		rootDir: rootDir,
-		base:    base,
+		store:       st,
+		rootDir:     rootDir,
+		base:        base,
+		highlighter: highlight.NewCache(highlightCacheSize),
 	}
 
 	// Serve frontend

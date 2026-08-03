@@ -17,9 +17,10 @@ import (
 )
 
 type handlers struct {
-	store   *store.Store
-	rootDir string
-	base    gitstatus.Base
+	store       *store.Store
+	rootDir     string
+	base        gitstatus.Base
+	highlighter *highlight.Cache
 }
 
 func (h *handlers) handleTree(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +82,7 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hl := highlight.Highlight(path, string(content))
+	hl := h.highlighter.Highlight(path, string(content))
 	diff := gitstatus.GetFileDiff(h.rootDir, h.base, path, content)
 	resp := fileResponse{
 		HTML:          hl.HTML,
