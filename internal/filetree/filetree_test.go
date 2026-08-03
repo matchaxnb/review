@@ -247,3 +247,33 @@ func TestWalkKeepsNestedReviewFile(t *testing.T) {
 		t.Errorf("expected docs/REVIEW.md in tree, got %v", names)
 	}
 }
+
+// TestInIgnoredDir verifies that the directories left out of the tree are
+// recognised anywhere along a path, but not in a file's own name.
+func TestInIgnoredDir(t *testing.T) {
+	ignored := []string{
+		"vendor/lib.go",
+		"node_modules/pkg/index.js",
+		"frontend/vendor/pico.css",
+		"a/b/.git/config",
+		"dist/app.js",
+	}
+	for _, path := range ignored {
+		if !inIgnoredDir(path) {
+			t.Errorf("%q should be ignored", path)
+		}
+	}
+
+	kept := []string{
+		"main.go",
+		"src/build.go",
+		"vendor.go",
+		"pkg/dist.txt",
+		"a/vendoring/x.go",
+	}
+	for _, path := range kept {
+		if inIgnoredDir(path) {
+			t.Errorf("%q should be kept", path)
+		}
+	}
+}

@@ -21,9 +21,10 @@ type Entry struct {
 // reviewed directory. It is not part of what is under review.
 const reviewFile = "REVIEW.md"
 
-// ignoredDirs are directory names never included in the tree. Version control
-// metadata directories are listed here because their contents are not source
-// code the user would review.
+// ignoredDirs are directory names never included in the tree, whether it is
+// built from git or by walking the filesystem. Version control metadata
+// directories are listed here because their contents are not source code the
+// user would review.
 var ignoredDirs = map[string]bool{
 	"vendor":       true,
 	"node_modules": true,
@@ -83,9 +84,25 @@ func gitLsFiles(root string) ([]string, error) {
 		if ignoredExts[ext] {
 			continue
 		}
+		if inIgnoredDir(path) {
+			continue
+		}
 		files = append(files, path)
 	}
 	return files, nil
+}
+
+// inIgnoredDir reports whether a file sits below one of the directories that are
+// left out of the tree. Paths come from git and are separated by slashes on
+// every platform.
+func inIgnoredDir(path string) bool {
+	parts := strings.Split(path, "/")
+	for _, dir := range parts[:len(parts)-1] {
+		if ignoredDirs[dir] {
+			return true
+		}
+	}
+	return false
 }
 
 type dirNode struct {
