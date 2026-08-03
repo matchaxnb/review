@@ -1,8 +1,10 @@
 package store
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -178,19 +180,82 @@ func TestContextMatchesAt(t *testing.T) {
 func TestFindContext(t *testing.T) {
 	fileLines := []string{"a", "b", "c", "d", "e"}
 
-	pos := findContext(fileLines, []string{"b", "c", "d"})
+	pos := findContext(fileLines, []string{"b", "c", "d"}, 1)
 	if pos != 2 {
 		t.Errorf("expected position 2, got %d", pos)
 	}
 
-	pos = findContext(fileLines, []string{"x", "y"})
+	pos = findContext(fileLines, []string{"x", "y"}, 1)
 	if pos != 0 {
 		t.Errorf("expected 0 for not found, got %d", pos)
 	}
 
-	pos = findContext(fileLines, []string{})
+	pos = findContext(fileLines, []string{}, 1)
 	if pos != 0 {
 		t.Errorf("expected 0 for empty context, got %d", pos)
+	}
+
+	// A context longer than the file matches nothing
+	pos = findContext([]string{"a"}, []string{"a", "b"}, 1)
+	if pos != 0 {
+		t.Errorf("expected 0 for a context longer than the file, got %d", pos)
+	}
+}
+
+// TestFindContextPrefersNearestMatch verifies that a context appearing more than
+// once relocates to the copy closest to where it used to be, rather than to
+// whichever comes first in the file.
+func TestFindContextPrefersNearestMatch(t *testing.T) {
+	// The same three lines open a block at 1, 6 and 11
+	fileLines := []string{
+		"}", "", "func f() {",
+		"\tbody", "",
+		"}", "", "func f() {",
+		"\tbody", "",
+		"}", "", "func f() {",
+		"\tbody",
+	}
+	context := []string{"}", "", "func f() {"}
+
+	for near, want := range map[int]int{1: 1, 3: 1, 4: 6, 6: 6, 8: 6, 11: 11, 99: 11} {
+		if got := findContext(fileLines, context, near); got != want {
+			t.Errorf("searching from %d found %d, want %d", near, got, want)
+		}
+	}
+}
+
+// TestCheckDrift_RelocatesToNearestCopy verifies that inserting a block above an
+// annotation moves it down to its own code, not up to an identical block.
+func TestCheckDrift_RelocatesToNearestCopy(t *testing.T) {
+	tmpDir := t.TempDir()
+	mdPath := filepath.Join(tmpDir, "REVIEW.md")
+	srcPath := filepath.Join(tmpDir, "test.go")
+
+	block := "func x() {\n\treturn\n}\n"
+	if err := os.WriteFile(srcPath, []byte(block+block), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Load(mdPath, tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Comment on the second copy's body
+	if err := st.Set("test.go", 5, "the second one"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Push everything down by inserting a line at the top
+	if err := os.WriteFile(srcPath, []byte("// header\n"+block+block), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !checkDrift(t, st, "test.go") {
+		t.Fatal("expected the annotation to move")
+	}
+
+	anns := st.GetFile("test.go")
+	if _, ok := anns[6]; !ok {
+		t.Errorf("expected the annotation on line 6, got lines %v", slices.Sorted(maps.Keys(anns)))
 	}
 }
 

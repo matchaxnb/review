@@ -98,7 +98,7 @@ func (s *Store) checkDrift(filePath string) bool {
 		}
 
 		// Context doesn't match at stored position — try to find it elsewhere
-		newFrom := findContext(fileLines, ann.Context)
+		newFrom := findContext(fileLines, ann.Context, ann.ContextFrom)
 		if newFrom > 0 {
 			// Found at a new position — relocate
 			delta := newFrom - ann.ContextFrom
@@ -147,23 +147,31 @@ func contextMatchesAt(fileLines []string, context []string, fromLine int) bool {
 	return true
 }
 
-// findContext searches the entire file for a block of lines matching context.
-// Returns the 1-based line number of the first match, or 0 if not found.
-func findContext(fileLines []string, context []string) int {
-	if len(context) == 0 {
+// findContext searches the file for a block of lines matching context and
+// returns its 1-based line number, or 0 when there is none.
+//
+// The search runs outwards from near, so the match closest to where the context
+// used to be wins. Code that repeats itself — a run of closing braces, blank
+// lines, the same few lines of boilerplate — would otherwise pull an annotation
+// to whichever copy comes first in the file.
+func findContext(fileLines []string, context []string, near int) int {
+	limit := len(fileLines) - len(context) + 1
+	if len(context) == 0 || limit < 1 {
 		return 0
 	}
-	limit := len(fileLines) - len(context) + 1
-	for i := 0; i < limit; i++ {
-		match := true
-		for j, ctx := range context {
-			if fileLines[i+j] != ctx {
-				match = false
-				break
-			}
+	if near < 1 {
+		near = 1
+	}
+
+	for d := 0; d <= max(near-1, limit-near); d++ {
+		if at := near - d; at >= 1 && contextMatchesAt(fileLines, context, at) {
+			return at
 		}
-		if match {
-			return i + 1 // 1-based
+		if d == 0 {
+			continue
+		}
+		if at := near + d; at <= limit && contextMatchesAt(fileLines, context, at) {
+			return at
 		}
 	}
 	return 0
