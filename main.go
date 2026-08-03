@@ -56,10 +56,12 @@ func main() {
 	}
 
 	// Run initial drift check on all annotated files
-	if drifted := st.CheckAllDrift(); len(drifted) > 0 {
-		for f := range drifted {
-			log.Printf("Drift detected in %s — annotations adjusted", f)
-		}
+	drifted, err := st.CheckAllDrift()
+	if err != nil {
+		log.Printf("Warning: could not write adjusted annotations: %v", err)
+	}
+	for f := range drifted {
+		log.Printf("Drift detected in %s — annotations adjusted", f)
 	}
 
 	subFS, err := fs.Sub(frontendFS, "frontend")

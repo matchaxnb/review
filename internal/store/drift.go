@@ -7,11 +7,41 @@ import (
 
 // CheckDrift checks annotations for a single file against the current source.
 // It relocates annotations whose context has moved and marks as outdated those
-// whose context can no longer be found. Returns true if any changes were made.
-func (s *Store) CheckDrift(filePath string) bool {
+// whose context can no longer be found. Returns whether anything changed, along
+// with any error from writing the result out.
+func (s *Store) CheckDrift(filePath string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if !s.checkDrift(filePath) {
+		return false, nil
+	}
+	return true, s.flush()
+}
+
+// CheckAllDrift runs drift detection on all annotated files, writing the result
+// once rather than after every file. Returns the file paths that changed, along
+// with any error from writing the result out.
+func (s *Store) CheckAllDrift() (map[string]bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	changed := make(map[string]bool)
+	for file := range s.data {
+		if s.checkDrift(file) {
+			changed[file] = true
+		}
+	}
+	if len(changed) == 0 {
+		return changed, nil
+	}
+	return changed, s.flush()
+}
+
+// checkDrift brings one file's annotations back in line with its source and
+// reports whether that changed anything. The caller holds the lock and persists
+// the result.
+func (s *Store) checkDrift(filePath string) bool {
 	annotations := s.data[filePath]
 	if len(annotations) == 0 {
 		return false
@@ -27,9 +57,6 @@ func (s *Store) CheckDrift(filePath string) bool {
 				ann.Outdated = true
 				changed = true
 			}
-		}
-		if changed {
-			s.flush()
 		}
 		return changed
 	}
@@ -103,30 +130,7 @@ func (s *Store) CheckDrift(filePath string) bool {
 		annotations[r.newLine] = r.ann
 	}
 
-	if changed {
-		s.flush()
-	}
 	return changed
-}
-
-// CheckAllDrift runs drift detection on all annotated files.
-// Returns a map of file paths that had changes.
-func (s *Store) CheckAllDrift() map[string]bool {
-	// Get list of files while holding read lock
-	s.mu.RLock()
-	files := make([]string, 0, len(s.data))
-	for f := range s.data {
-		files = append(files, f)
-	}
-	s.mu.RUnlock()
-
-	result := make(map[string]bool)
-	for _, f := range files {
-		if s.CheckDrift(f) {
-			result[f] = true
-		}
-	}
-	return result
 }
 
 // contextMatchesAt checks if the given context lines match the file at the given position.

@@ -26,7 +26,7 @@ func TestCheckDrift_NoChange(t *testing.T) {
 		},
 	}
 
-	changed := st.CheckDrift("test.go")
+	changed := checkDrift(t, st, "test.go")
 	if changed {
 		t.Error("expected no change when context matches")
 	}
@@ -52,7 +52,7 @@ func TestCheckDrift_Relocated(t *testing.T) {
 		},
 	}
 
-	changed := st.CheckDrift("test.go")
+	changed := checkDrift(t, st, "test.go")
 	if !changed {
 		t.Fatal("expected change when context moved")
 	}
@@ -86,7 +86,7 @@ func TestCheckDrift_Outdated(t *testing.T) {
 		},
 	}
 
-	changed := st.CheckDrift("test.go")
+	changed := checkDrift(t, st, "test.go")
 	if !changed {
 		t.Fatal("expected change when context not found")
 	}
@@ -116,7 +116,7 @@ func TestCheckDrift_FileDeleted(t *testing.T) {
 		},
 	}
 
-	changed := st.CheckDrift("nonexistent.go")
+	changed := checkDrift(t, st, "nonexistent.go")
 	if !changed {
 		t.Fatal("expected change when file doesn't exist")
 	}
@@ -143,7 +143,7 @@ func TestCheckDrift_NoContext(t *testing.T) {
 		1: {Comment: "no context"},
 	}
 
-	if changed := st.CheckDrift("test.go"); !changed {
+	if !checkDrift(t, st, "test.go") {
 		t.Error("expected the annotation to adopt the current source")
 	}
 	ann := st.data["test.go"][1]
@@ -249,7 +249,7 @@ func TestCheckDrift_OutdatedSurvivesReload(t *testing.T) {
 
 	// The annotated code is replaced by something else entirely
 	os.WriteFile(srcFile, []byte("l1\nl2\nl3\nREPLACED\nl5\nl6\nl7\n"), 0644)
-	if !st.CheckDrift("test.go") {
+	if !checkDrift(t, st, "test.go") {
 		t.Fatal("expected drift to be detected")
 	}
 	if !st.data["test.go"][4].Outdated {
@@ -261,7 +261,9 @@ func TestCheckDrift_OutdatedSurvivesReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reloaded.CheckAllDrift()
+	if _, err := reloaded.CheckAllDrift(); err != nil {
+		t.Fatal(err)
+	}
 	ann := reloaded.data["test.go"][4]
 	if ann == nil {
 		t.Fatal("expected annotation on line 4")
@@ -269,4 +271,15 @@ func TestCheckDrift_OutdatedSurvivesReload(t *testing.T) {
 	if !ann.Outdated {
 		t.Error("outdated mark was lost across a reload")
 	}
+}
+
+// checkDrift runs drift detection on one file and fails the test if the result
+// could not be written out.
+func checkDrift(t *testing.T, st *Store, file string) bool {
+	t.Helper()
+	changed, err := st.CheckDrift(file)
+	if err != nil {
+		t.Fatalf("writing REVIEW.md after drift check: %v", err)
+	}
+	return changed
 }

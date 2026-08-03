@@ -72,8 +72,14 @@ func (s *Store) OnChange(fn func()) {
 	s.onChange = append(s.onChange, fn)
 }
 
+// notifyChange runs the registered callbacks. They are collected under the lock
+// but called without it, since a callback is free to read the store.
 func (s *Store) notifyChange() {
-	for _, fn := range s.onChange {
+	s.mu.RLock()
+	fns := slices.Clone(s.onChange)
+	s.mu.RUnlock()
+
+	for _, fn := range fns {
 		fn()
 	}
 }

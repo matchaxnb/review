@@ -221,10 +221,16 @@ func (w *Watcher) emitDebounced(key string, event Event) {
 		t.Stop()
 	}
 
-	w.debounce[key] = time.AfterFunc(500*time.Millisecond, func() {
+	var timer *time.Timer
+	timer = time.AfterFunc(500*time.Millisecond, func() {
+		defer w.forget(key, timer)
+
 		// For file-changed events, run drift detection first
 		if event.Type == "file-changed" {
-			drifted := w.store.CheckDrift(event.Path)
+			drifted, err := w.store.CheckDrift(event.Path)
+			if err != nil {
+				log.Printf("failed to write REVIEW.md after drift check: %v", err)
+			}
 			// A client looking at the file needs the new content either way.
 			// For any other file there is only something to report once drift
 			// has moved an annotation.
@@ -249,9 +255,17 @@ func (w *Watcher) emitDebounced(key string, event Event) {
 		default:
 			// Channel full — drop event
 		}
-
-		w.debounceMu.Lock()
-		delete(w.debounce, key)
-		w.debounceMu.Unlock()
 	})
+	w.debounce[key] = timer
+}
+
+// forget drops a timer that has fired, unless a later event has already put
+// another one in its place.
+func (w *Watcher) forget(key string, t *time.Timer) {
+	w.debounceMu.Lock()
+	defer w.debounceMu.Unlock()
+
+	if w.debounce[key] == t {
+		delete(w.debounce, key)
+	}
 }
