@@ -109,14 +109,16 @@
   function handleWsMessage(msg) {
     switch (msg.type) {
       case 'file-changed':
-        showToast('File changed: ' + msg.path);
         // Update allAnnotations for this file
         if (msg.annotations) {
           state.allAnnotations[msg.path] = msg.annotations;
         }
-        // If we're viewing this file, refresh it
+        // The file being viewed reloads, which is feedback enough. Any other
+        // file only shows up as a notice.
         if (state.currentFile === msg.path) {
           refreshCurrentFile();
+        } else {
+          showToast('File changed: ' + msg.path);
         }
         updateCommentCount();
         renderTree();

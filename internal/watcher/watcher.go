@@ -213,9 +213,12 @@ func (w *Watcher) emitDebounced(key string, event Event) {
 	w.debounce[key] = time.AfterFunc(500*time.Millisecond, func() {
 		// For file-changed events, run drift detection first
 		if event.Type == "file-changed" {
-			changed := w.store.CheckDrift(event.Path)
-			if !changed {
-				return // No actual drift — no need to notify frontend
+			drifted := w.store.CheckDrift(event.Path)
+			// A client looking at the file needs the new content either way.
+			// For any other file there is only something to report once drift
+			// has moved an annotation.
+			if !drifted && event.Path != w.currentlyViewed() {
+				return
 			}
 		} else if event.Type == "review-reloaded" {
 			changed, err := w.store.Reload()

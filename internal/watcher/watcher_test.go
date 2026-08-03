@@ -68,6 +68,47 @@ func TestForeignWriteIsReported(t *testing.T) {
 	}
 }
 
+// TestViewedFileIsReportedWithoutDrift verifies that an edit to the file a
+// client has open is passed on even when it leaves every annotation in place.
+func TestViewedFileIsReportedWithoutDrift(t *testing.T) {
+	st, w, dir := newTestWatcher(t)
+
+	path := filepath.Join(dir, "a.go")
+	if err := os.WriteFile(path, []byte("l1\nl2\nl3\nl4\nl5\nl6\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set("a.go", 2, "a comment"); err != nil {
+		t.Fatal(err)
+	}
+	w.WatchFile("a.go")
+	drainEvents(w)
+
+	// Change a line far away from the annotation's context
+	if err := os.WriteFile(path, []byte("l1\nl2\nl3\nl4\nl5\nedited\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case ev := <-w.Events():
+		if ev.Path != "a.go" {
+			t.Errorf("expected event for a.go, got %q", ev.Path)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("edit to the file being viewed was not reported")
+	}
+}
+
+// drainEvents consumes the events queued so far.
+func drainEvents(w *Watcher) {
+	for {
+		select {
+		case <-w.Events():
+		case <-time.After(700 * time.Millisecond):
+			return
+		}
+	}
+}
+
 // TestWatchFileDoesNotAccumulate verifies that browsing files leaves only the
 // directories that are still needed under watch.
 func TestWatchFileDoesNotAccumulate(t *testing.T) {
