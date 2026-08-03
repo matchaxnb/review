@@ -11,7 +11,8 @@
     allAnnotations: {},   // path → {line → {comment, outdated}} for all files
     diffLines: {},        // line → "added"|"modified" for current file
     diffHunks: [],        // [{startLine, endLine, diff}] for current file
-    diffDeletions: [],    // [{afterLine, count, hunkIndex}] for current file
+    diffDeletions: [],    // [{afterLine, hunkIndex}] for current file
+    totalLines: 0,        // number of lines in the current file
     editingLine: null,
     editingText: '',
     gitStatuses: {},
@@ -468,6 +469,11 @@
   // Draw the diff and comment markers over the file just loaded. Only the lines
   // that carry one are touched.
   function renderCodeView() {
+    // Counted before the deletion markers are inserted: those carry the same
+    // class but stand between lines rather than being ones, and counting them
+    // would push every scrollbar marker up the strip.
+    state.totalLines = codeContent.querySelectorAll('.chroma .line').length;
+
     for (const [lineNum, type] of Object.entries(state.diffLines)) {
       const lineEl = lineElement(lineNum);
       if (lineEl) lineEl.classList.add('diff-' + type);
@@ -515,7 +521,7 @@
     let strip = document.querySelector('.scrollbar-markers');
     if (strip) strip.remove();
 
-    const totalLines = codeContent.querySelectorAll('.chroma .line').length;
+    const totalLines = state.totalLines;
     if (totalLines === 0) return;
 
     const markers = [];
