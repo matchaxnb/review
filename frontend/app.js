@@ -42,6 +42,8 @@
     wsIndicator = document.getElementById('ws-indicator');
     toastContainer = document.getElementById('toast-container');
 
+    attachCodeViewHandlers();
+
     loadConfig();
     loadTree();
     loadAllAnnotations();
@@ -367,7 +369,7 @@
     `;
     codeContent.innerHTML = fileData.html;
     codeContent.scrollTop = scrollTop;
-    attachLineHandlers();
+    renderCodeView();
     renderCommentList();
   }
 
@@ -405,88 +407,107 @@
     }
   }
 
-  // Attach click handlers to code lines
-  function attachLineHandlers() {
-    const lines = codeContent.querySelectorAll('.chroma .line');
-    lines.forEach(lineEl => {
-      // Find line number from the anchor or lnt span
-      const anchor = lineEl.querySelector('a[id^="L"]') || lineEl.querySelector('[id^="L"]');
-      let lineNum = null;
+  // The gutter cell of a line carries the id chroma generated for it, which
+  // makes looking a line up a hash lookup rather than a walk over the file.
+  function lineElement(lineNum) {
+    const gutter = document.getElementById('L' + lineNum);
+    return gutter ? gutter.parentElement : null;
+  }
 
-      if (anchor) {
-        const id = anchor.id || anchor.getAttribute('id');
-        if (id) {
-          lineNum = parseInt(id.replace('L', ''), 10);
-        }
-      }
+  // The line number an element sits on, or null for the deletion markers, which
+  // stand between lines and have no number of their own.
+  function lineNumberOf(lineEl) {
+    const gutter = lineEl.firstElementChild;
+    if (!gutter || !gutter.id) return null;
+    const lineNum = parseInt(gutter.id.slice(1), 10);
+    return Number.isInteger(lineNum) ? lineNum : null;
+  }
 
-      if (!lineNum) {
-        // Try to find from lnt span
-        const lnt = lineEl.querySelector('.lnt, .ln');
-        if (lnt) {
-          lineNum = parseInt(lnt.textContent.trim(), 10);
-        }
-      }
+  // The diff hunk a line belongs to, or null. Hunks arrive in order, so this
+  // finds one without looking at every hunk.
+  function hunkAt(lineNum) {
+    let low = 0;
+    let high = state.diffHunks.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const hunk = state.diffHunks[mid];
+      if (lineNum < hunk.startLine) high = mid - 1;
+      else if (lineNum > hunk.endLine) low = mid + 1;
+      else return hunk;
+    }
+    return null;
+  }
 
-      if (lineNum && !isNaN(lineNum)) {
-        lineEl.dataset.lineNum = lineNum;
-
-        // Mark changed lines (git diff)
-        const diffType = state.diffLines[lineNum];
-        if (diffType) {
-          lineEl.classList.add('diff-' + diffType);
-
-          // Show diff tooltip on gutter (line number) hover
-          const hunk = state.diffHunks.find(h => lineNum >= h.startLine && lineNum <= h.endLine);
-          if (hunk) {
-            const gutter = lineEl.querySelector('.lnt, .ln');
-            if (gutter) {
-              gutter.addEventListener('mouseenter', (e) => showDiffTooltip(e, hunk));
-            }
-          }
-        }
-
-        // Mark lines with comments
-        const ann = state.annotations[lineNum];
-        if (ann) {
-          lineEl.classList.add('has-comment');
-          if (ann.outdated) {
-            lineEl.classList.add('has-outdated-comment');
-          }
-        }
-
-        lineEl.addEventListener('click', () => clickLine(lineNum));
-      }
+  // Handle clicks and gutter hovers for the whole code view. Registered once for
+  // the container rather than per line, of which a large file holds tens of
+  // thousands.
+  function attachCodeViewHandlers() {
+    codeContent.addEventListener('click', (e) => {
+      const lineEl = e.target.closest('.line');
+      if (!lineEl) return;
+      const lineNum = lineNumberOf(lineEl);
+      if (lineNum !== null) clickLine(lineNum);
     });
 
-    // Inject deletion markers
+    codeContent.addEventListener('mouseover', (e) => {
+      const gutter = e.target.closest('.ln');
+      if (!gutter) return;
+
+      // A deletion marker names its hunk; a line is looked up by its number
+      let hunk = null;
+      if (gutter.dataset.hunkIndex !== undefined) {
+        hunk = state.diffHunks[Number(gutter.dataset.hunkIndex)] || null;
+      } else {
+        const lineNum = lineNumberOf(gutter.parentElement);
+        if (lineNum !== null && state.diffLines[lineNum]) hunk = hunkAt(lineNum);
+      }
+      if (hunk) showDiffTooltip(e, hunk);
+    });
+  }
+
+  // Draw the diff and comment markers over the file just loaded. Only the lines
+  // that carry one are touched.
+  function renderCodeView() {
+    for (const [lineNum, type] of Object.entries(state.diffLines)) {
+      const lineEl = lineElement(lineNum);
+      if (lineEl) lineEl.classList.add('diff-' + type);
+    }
+
+    for (const [lineNum, ann] of Object.entries(state.annotations)) {
+      const lineEl = lineElement(lineNum);
+      if (!lineEl) continue;
+      lineEl.classList.add('has-comment');
+      if (ann.outdated) lineEl.classList.add('has-outdated-comment');
+    }
+
+    // Keep the line being commented on marked after a redraw
+    if (state.editingLine) selectLine(lineElement(state.editingLine));
+
+    renderDeletionMarkers();
+    renderScrollbarMarkers();
+  }
+
+  // Insert a marker for each block of lines the diff removed.
+  function renderDeletionMarkers() {
     state.diffDeletions.forEach(del => {
       const marker = document.createElement('span');
       marker.className = 'line diff-deleted-marker';
 
-      const gutterSpan = document.createElement('span');
-      gutterSpan.className = 'ln diff-del-gutter';
-      gutterSpan.textContent = '\u00a0'; // non-breaking space
-      marker.appendChild(gutterSpan);
+      const gutter = document.createElement('span');
+      gutter.className = 'ln diff-del-gutter';
+      gutter.textContent = '\u00a0'; // non-breaking space
+      gutter.dataset.hunkIndex = del.hunkIndex;
+      marker.appendChild(gutter);
 
-      // Wire up tooltip on gutter hover
-      const hunk = del.hunkIndex >= 0 ? state.diffHunks[del.hunkIndex] : null;
-      if (hunk) {
-        gutterSpan.addEventListener('mouseenter', (e) => showDiffTooltip(e, hunk));
-      }
-
-      // Insert after the appropriate line
       if (del.afterLine === 0) {
         // Deletion at top of file — insert before first line
         const firstLine = codeContent.querySelector('.chroma .line');
-        if (firstLine) firstLine.parentNode.insertBefore(marker, firstLine);
+        if (firstLine) firstLine.before(marker);
       } else {
-        const afterEl = codeContent.querySelector(`.line[data-line-num="${del.afterLine}"]`);
-        if (afterEl) afterEl.insertAdjacentElement('afterend', marker);
+        const afterEl = lineElement(del.afterLine);
+        if (afterEl) afterEl.after(marker);
       }
     });
-
-    renderScrollbarMarkers();
   }
 
   // Render scrollbar markers for comments and diff lines
@@ -532,14 +553,18 @@
   }
 
 
+  // Mark a line as the one being commented on. The previous one is remembered
+  // rather than searched for again.
+  let selectedLineEl = null;
+  function selectLine(lineEl) {
+    if (selectedLineEl) selectedLineEl.classList.remove('selected');
+    selectedLineEl = lineEl;
+    if (lineEl) lineEl.classList.add('selected');
+  }
+
   // Click a line to add/edit comment
   function clickLine(lineNum) {
-    // Deselect previous
-    codeContent.querySelectorAll('.line.selected').forEach(el => el.classList.remove('selected'));
-
-    // Select this line
-    const lineEl = codeContent.querySelector(`.line[data-line-num="${lineNum}"]`);
-    if (lineEl) lineEl.classList.add('selected');
+    selectLine(lineElement(lineNum));
 
     state.editingLine = lineNum;
     const ann = state.annotations[lineNum];
@@ -571,7 +596,7 @@
       state.allAnnotations[state.currentFile][state.editingLine] = { comment: text, outdated: false };
 
       // Update gutter
-      const lineEl = codeContent.querySelector(`.line[data-line-num="${state.editingLine}"]`);
+      const lineEl = lineElement(state.editingLine);
       if (lineEl) {
         lineEl.classList.add('has-comment');
         lineEl.classList.remove('has-outdated-comment');
@@ -607,7 +632,7 @@
       }
 
       // Update gutter
-      const lineEl = codeContent.querySelector(`.line[data-line-num="${state.editingLine}"]`);
+      const lineEl = lineElement(state.editingLine);
       if (lineEl) {
         lineEl.classList.remove('has-comment');
         lineEl.classList.remove('has-outdated-comment');
@@ -627,7 +652,7 @@
   // Cancel editing
   function cancelEdit() {
     state.editingLine = null;
-    codeContent.querySelectorAll('.line.selected').forEach(el => el.classList.remove('selected'));
+    selectLine(null);
     updateEditorVisibility();
   }
 
@@ -659,7 +684,7 @@
         const ln = parseInt(item.dataset.commentLine, 10);
         clickLine(ln);
         // Scroll to line
-        const lineEl = codeContent.querySelector(`.line[data-line-num="${ln}"]`);
+        const lineEl = lineElement(ln);
         if (lineEl) lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
     });
@@ -691,10 +716,16 @@
 
   // Diff tooltip
   let diffTooltip = null;
+  let diffTooltipHunk = null;
   let diffTooltipMoveHandler = null;
 
   function showDiffTooltip(event, hunk) {
+    // Moving along the gutter of one hunk keeps the tooltip that is up, rather
+    // than building the same one again for every cell passed over.
+    if (diffTooltip && diffTooltipHunk === hunk) return;
+
     hideDiffTooltip();
+    diffTooltipHunk = hunk;
     diffTooltip = document.createElement('div');
     diffTooltip.className = 'diff-tooltip';
     const lines = hunk.diff.trimEnd().split('\n');
@@ -753,6 +784,7 @@
       diffTooltip.remove();
       diffTooltip = null;
     }
+    diffTooltipHunk = null;
   }
 
   // Start a new review (delete REVIEW.md)

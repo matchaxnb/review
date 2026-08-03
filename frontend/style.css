@@ -166,7 +166,6 @@ body {
   background: transparent !important;
 }
 
-.code-content .chroma .lnt,
 .code-content .chroma .ln {
   color: var(--rv-muted);
   opacity: 0.6;
