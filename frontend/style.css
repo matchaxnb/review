@@ -17,10 +17,10 @@ body {
 
 /* File Tree */
 .file-tree {
-  border-right: 1px solid var(--pico-border);
+  border-right: 1px solid var(--rv-border);
   overflow-y: auto;
   padding: 0.5rem 0;
-  background: var(--pico-card-bg);
+  background: var(--rv-card-bg);
 }
 
 .file-tree-header {
@@ -29,8 +29,8 @@ body {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--pico-muted);
-  border-bottom: 1px solid var(--pico-border);
+  color: var(--rv-muted);
+  border-bottom: 1px solid var(--rv-border);
   margin-bottom: 0.25rem;
   display: flex;
   align-items: center;
@@ -41,18 +41,18 @@ body {
   all: unset;
   font-size: 0.65rem;
   padding: 0.15rem 0.4rem;
-  border: 1px solid var(--pico-border);
-  border-radius: var(--pico-radius);
+  border: 1px solid var(--rv-border);
+  border-radius: var(--rv-radius);
   cursor: pointer;
-  color: var(--pico-muted);
+  color: var(--rv-muted);
   text-transform: none;
   letter-spacing: normal;
   font-weight: normal;
 }
 
 .new-review-btn:hover {
-  background: var(--pico-border);
-  color: var(--pico-color);
+  background: var(--rv-border);
+  color: var(--rv-color);
 }
 
 .tree-item {
@@ -68,11 +68,11 @@ body {
 }
 
 .tree-item:hover {
-  background: var(--pico-border);
+  background: var(--rv-border);
 }
 
 .tree-item.active {
-  background: var(--pico-primary);
+  background: var(--rv-primary);
   color: #fff;
 }
 
@@ -106,7 +106,7 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--pico-primary);
+  background: var(--rv-primary);
   margin-left: auto;
   flex-shrink: 0;
   position: sticky;
@@ -126,8 +126,8 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0.5rem 1rem;
-  border-bottom: 1px solid var(--pico-border);
-  background: var(--pico-card-bg);
+  border-bottom: 1px solid var(--rv-border);
+  background: var(--rv-card-bg);
   font-size: 0.85rem;
   min-height: 40px;
 }
@@ -140,9 +140,9 @@ body {
 .code-header .lang-badge {
   font-size: 0.75rem;
   padding: 0.1rem 0.5rem;
-  background: var(--pico-border);
+  background: var(--rv-border);
   border-radius: 1rem;
-  color: var(--pico-muted);
+  color: var(--rv-muted);
 }
 
 .code-content {
@@ -168,7 +168,7 @@ body {
 
 .code-content .chroma .lnt,
 .code-content .chroma .ln {
-  color: var(--pico-muted);
+  color: var(--rv-muted);
   opacity: 0.6;
   user-select: none;
   padding-right: 1rem;
@@ -208,7 +208,7 @@ body {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--pico-primary);
+  background: var(--rv-primary);
   pointer-events: none;
 }
 
@@ -251,7 +251,7 @@ body {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--pico-muted);
+  color: var(--rv-muted);
   text-align: center;
   padding: 2rem;
 }
@@ -265,9 +265,9 @@ body {
 
 /* Comment Panel */
 .comment-panel {
-  border-left: 1px solid var(--pico-border);
+  border-left: 1px solid var(--rv-border);
   overflow-y: auto;
-  background: var(--pico-card-bg);
+  background: var(--rv-card-bg);
   display: flex;
   flex-direction: column;
 }
@@ -278,8 +278,8 @@ body {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--pico-muted);
-  border-bottom: 1px solid var(--pico-border);
+  color: var(--rv-muted);
+  border-bottom: 1px solid var(--rv-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -294,27 +294,27 @@ body {
 .comment-item {
   padding: 0.6rem;
   margin-bottom: 0.4rem;
-  border-radius: var(--pico-radius);
-  background: var(--pico-bg);
-  border: 1px solid var(--pico-border);
+  border-radius: var(--rv-radius);
+  background: var(--rv-bg);
+  border: 1px solid var(--rv-border);
   cursor: pointer;
   transition: border-color 0.15s;
 }
 
 .comment-item:hover {
-  border-color: var(--pico-primary);
+  border-color: var(--rv-primary);
 }
 
 .comment-item .comment-line {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--pico-primary);
+  color: var(--rv-primary);
   margin-bottom: 0.25rem;
 }
 
 .comment-item .comment-text {
   font-size: 0.85rem;
-  color: var(--pico-color);
+  color: var(--rv-color);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -322,8 +322,8 @@ body {
 /* Comment Editor */
 .comment-editor {
   padding: 0.75rem;
-  border-top: 1px solid var(--pico-border);
-  background: var(--pico-bg);
+  border-top: 1px solid var(--rv-border);
+  background: var(--rv-bg);
 }
 
 .comment-editor .editor-header {
@@ -336,7 +336,7 @@ body {
 .comment-editor .editor-header span {
   font-weight: 600;
   font-size: 0.85rem;
-  color: var(--pico-primary);
+  color: var(--rv-primary);
 }
 
 .comment-editor textarea {
@@ -361,10 +361,10 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0.3rem 1rem;
-  border-top: 1px solid var(--pico-border);
-  background: var(--pico-card-bg);
+  border-top: 1px solid var(--rv-border);
+  background: var(--rv-card-bg);
   font-size: 0.75rem;
-  color: var(--pico-muted);
+  color: var(--rv-muted);
 }
 
 /* Loading */
@@ -373,7 +373,7 @@ body {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--pico-muted);
+  color: var(--rv-muted);
 }
 
 @keyframes spin {
@@ -383,8 +383,8 @@ body {
 .spinner {
   width: 20px;
   height: 20px;
-  border: 2px solid var(--pico-border);
-  border-top-color: var(--pico-primary);
+  border: 2px solid var(--rv-border);
+  border-top-color: var(--rv-primary);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
   margin-right: 0.5rem;
@@ -503,9 +503,9 @@ body {
 
 .toast {
   padding: 0.6rem 1rem;
-  border-radius: var(--pico-radius);
-  background: var(--pico-card-bg);
-  border: 1px solid var(--pico-border);
+  border-radius: var(--rv-radius);
+  background: var(--rv-card-bg);
+  border: 1px solid var(--rv-border);
   font-size: 0.8rem;
   box-shadow: 0 2px 8px rgba(0,0,0,0.12);
   pointer-events: auto;
@@ -556,9 +556,9 @@ body {
   max-width: 600px;
   max-height: 300px;
   overflow: auto;
-  background: var(--pico-card-bg);
-  border: 1px solid var(--pico-border);
-  border-radius: var(--pico-radius);
+  background: var(--rv-card-bg);
+  border: 1px solid var(--rv-border);
+  border-radius: var(--rv-radius);
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   padding: 0.5rem;
 }
@@ -569,7 +569,7 @@ body {
   font-size: 12px;
   line-height: 1.4;
   white-space: pre;
-  color: var(--pico-color);
+  color: var(--rv-color);
 }
 
 .diff-tooltip .diff-add {
