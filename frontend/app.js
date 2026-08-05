@@ -746,6 +746,8 @@
   let diffTooltip = null;
   let diffTooltipHunk = null;
   let diffTooltipMoveHandler = null;
+  let diffTooltipBounds = null;
+  let diffTooltipRaf = null;
 
   function showDiffTooltip(event, hunk) {
     // Moving along the gutter of one hunk keeps the tooltip that is up, rather
@@ -763,43 +765,64 @@
     }).join('\n');
     diffTooltip.innerHTML = '<pre>' + html + '</pre>';
 
+    // Place the tooltip at the cursor straight away so the pointer is already
+    // inside it (near the top-left corner). This lets a tall, scrollable
+    // tooltip be reached and scrolled without the pointer having to leave it
+    // first.
+    const inset = 12;
+    diffTooltip.style.left = Math.max(0, event.clientX - inset) + 'px';
+    diffTooltip.style.top = Math.max(0, event.clientY - inset) + 'px';
     document.body.appendChild(diffTooltip);
 
-    // Position the tooltip so the cursor is already inside it (near the
-    // top-left corner). This lets a tall, scrollable tooltip be reached and
-    // scrolled without the pointer having to leave it first.
-    const margin = 16;
-    const inset = 12;
-    const tooltipRect = diffTooltip.getBoundingClientRect();
-    let left = event.clientX - inset;
-    let top = event.clientY - inset;
+    // Clamping the tooltip into the viewport needs its measured size, and
+    // measuring forces the browser to lay out the page. On a large diff the
+    // code view holds so many nodes that this layout costs hundreds of
+    // milliseconds, and doing it here — while the pointer is crossing gutters
+    // during a scroll — stalls the scroll until it finishes. So the measuring
+    // and clamping are put off to the next frame, off the hover path, where the
+    // layout has already settled and reading it back is cheap.
+    const cursorX = event.clientX;
+    const cursorY = event.clientY;
+    diffTooltipRaf = requestAnimationFrame(() => {
+      diffTooltipRaf = null;
+      if (!diffTooltip) return;
 
-    // Keep it inside the viewport by shifting (never flipping away from the
-    // cursor, which would move it out from under the pointer).
-    if (left + tooltipRect.width > window.innerWidth - margin) {
-      left = window.innerWidth - margin - tooltipRect.width;
-    }
-    left = Math.max(margin, Math.min(left, event.clientX));
-    if (top + tooltipRect.height > window.innerHeight - margin) {
-      top = window.innerHeight - margin - tooltipRect.height;
-    }
-    top = Math.max(margin, Math.min(top, event.clientY));
+      const margin = 16;
+      const rect = diffTooltip.getBoundingClientRect();
+      let left = cursorX - inset;
+      let top = cursorY - inset;
 
-    diffTooltip.style.left = left + 'px';
-    diffTooltip.style.top = top + 'px';
+      // Keep it inside the viewport by shifting (never flipping away from the
+      // cursor, which would move it out from under the pointer).
+      if (left + rect.width > window.innerWidth - margin) {
+        left = window.innerWidth - margin - rect.width;
+      }
+      left = Math.max(margin, Math.min(left, cursorX));
+      if (top + rect.height > window.innerHeight - margin) {
+        top = window.innerHeight - margin - rect.height;
+      }
+      top = Math.max(margin, Math.min(top, cursorY));
+
+      diffTooltip.style.left = left + 'px';
+      diffTooltip.style.top = top + 'px';
+
+      // The tooltip stays where it was put, so its bounds are measured once
+      // here rather than on every movement of the pointer, which would force
+      // the browser to work out the page's layout again each time.
+      diffTooltipBounds = diffTooltip.getBoundingClientRect();
+    });
 
     // Hide once the pointer leaves the tooltip. A document-level mousemove
     // guard is used instead of the gutter's mouseleave: the tooltip now sits
     // under the cursor (covering the gutter), so relying on the gutter would
-    // hide it immediately and loop.
-    //
-    // The tooltip stays where it was put, so its bounds are measured once here
-    // rather than on every movement of the pointer, which would force the
-    // browser to work out the page's layout again each time.
-    const bounds = diffTooltip.getBoundingClientRect();
+    // hide it immediately and loop. Until the bounds are measured next frame
+    // the pointer is still at the corner where the tooltip was placed, so there
+    // is nothing to leave yet.
     diffTooltipMoveHandler = (e) => {
-      if (e.clientX < bounds.left || e.clientX > bounds.right ||
-          e.clientY < bounds.top || e.clientY > bounds.bottom) {
+      const b = diffTooltipBounds;
+      if (!b) return;
+      if (e.clientX < b.left || e.clientX > b.right ||
+          e.clientY < b.top || e.clientY > b.bottom) {
         hideDiffTooltip();
       }
     };
@@ -807,6 +830,10 @@
   }
 
   function hideDiffTooltip() {
+    if (diffTooltipRaf) {
+      cancelAnimationFrame(diffTooltipRaf);
+      diffTooltipRaf = null;
+    }
     if (diffTooltipMoveHandler) {
       document.removeEventListener('mousemove', diffTooltipMoveHandler);
       diffTooltipMoveHandler = null;
@@ -816,6 +843,7 @@
       diffTooltip = null;
     }
     diffTooltipHunk = null;
+    diffTooltipBounds = null;
   }
 
   // Start a new review (delete REVIEW.md)
