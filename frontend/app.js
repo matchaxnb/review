@@ -516,6 +516,14 @@
     renderScrollbarMarkers();
   }
 
+  // Take the comment markers off every line of the open file, for when the
+  // annotations go away without the file being drawn again.
+  function clearCommentMarkers() {
+    codeContent.querySelectorAll('.has-comment').forEach(lineEl => {
+      lineEl.classList.remove('has-comment', 'has-outdated-comment');
+    });
+  }
+
   // Insert a marker for each block of lines the diff removed.
   function renderDeletionMarkers() {
     state.diffDeletions.forEach(del => {
@@ -853,6 +861,7 @@
       await api('DELETE', '/api/review');
       state.allAnnotations = {};
       state.annotations = {};
+      clearCommentMarkers();
       annotationsChanged();
       showToast('New review started');
     } catch (e) {
