@@ -13,6 +13,7 @@
     diffHunks: [],        // [{startLine, endLine, diff}] for current file
     diffDeletions: [],    // [{afterLine, hunkIndex}] for current file
     totalLines: 0,        // number of lines in the current file
+    scrollPositions: {},  // path → scrollTop of the code view when the file was left
     editingLine: null,
     gitStatuses: {},
     wsConnected: false,
@@ -367,13 +368,13 @@
     });
   }
 
-  // Load the open file's content and annotations into the code view. The
-  // scroll position is kept so a reload after a change stays where you were.
-  async function loadCurrentFile(annotations) {
+  // Load the open file's content and annotations into the code view. The view
+  // ends up at scrollTop, which defaults to where it stands now so that a
+  // reload after a change stays where you were.
+  async function loadCurrentFile(annotations, scrollTop = codeContent.scrollTop) {
     const path = state.currentFile;
     if (!path) return;
 
-    const scrollTop = codeContent.scrollTop;
     const [fileData, annData] = await Promise.all([
       api('GET', '/api/file?path=' + encodeURIComponent(path)),
       annotations || api('GET', '/api/annotations?path=' + encodeURIComponent(path)),
@@ -407,8 +408,12 @@
     }
   }
 
-  // Open a file from the tree
+  // Open a file from the tree. Where the file being left stands is noted, and
+  // the file being opened returns to where it was last left.
   async function openFile(path) {
+    if (state.currentFile) {
+      state.scrollPositions[state.currentFile] = codeContent.scrollTop;
+    }
     state.currentFile = path;
     closeEditor();
 
@@ -425,7 +430,7 @@
     setActiveFile(path);
 
     try {
-      await loadCurrentFile();
+      await loadCurrentFile(null, state.scrollPositions[path] || 0);
     } catch (e) {
       codeContent.innerHTML = `<div class="empty-state"><p>Error loading file: ${escapeHtml(e.message)}</p></div>`;
     }
