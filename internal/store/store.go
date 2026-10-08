@@ -210,13 +210,12 @@ func (s *Store) Reload() (bool, error) {
 	changed := !equalAnnotations(s.data, meta.data)
 	s.data = meta.data
 	s.started = meta.started
-	// Adopt the times and the base the file records, so a review written by
-	// someone else is read back in its own context rather than this process's.
+	// Adopt the times the file records, so a review written by someone else is
+	// read back with its own history rather than this process's. The base is
+	// not adopted: it belongs to the invocation, and overwriting it would
+	// mislabel the very next write.
 	s.created = meta.created
 	s.modified = meta.modified
-	if meta.base != "" {
-		s.base = meta.base
-	}
 	return changed, nil
 }
 

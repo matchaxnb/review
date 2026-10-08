@@ -76,13 +76,14 @@ func (s *Store) archiveLocked() (dest string, retired bool, err error) {
 	return dest, true, nil
 }
 
-// reset empties the store.
+// reset empties the store, leaving the review ready for the next comment. The
+// base is kept: it belongs to the invocation, not to the review file, so a new
+// review is still made against the same point in history.
 func (s *Store) reset() {
 	s.data = make(map[string]map[int]*Annotation)
 	s.started = ""
 	s.created = ""
 	s.modified = ""
-	s.base = ""
 }
 
 // archiveTo moves REVIEW.md into the history directory and returns where it

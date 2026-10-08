@@ -94,8 +94,8 @@ func TestReviewBaseUpdatedWhenChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The base is read back on load and adopted, so a review moved between
-	// clones keeps its own record until the caller sets a new one.
+	// Open the same review against a different revision: the base of the
+	// invocation replaces the recorded one on the next write.
 	reloaded, err := Load(mdPath, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -111,6 +111,77 @@ func TestReviewBaseUpdatedWhenChanged(t *testing.T) {
 	}
 	if meta.base != "new base" {
 		t.Errorf("base: got %q, want %q", meta.base, "new base")
+	}
+}
+
+// TestReviewBaseKeptAcrossReload verifies that a base set for this invocation
+// survives reading the file back, so the review is not relabelled with the
+// base recorded in it.
+func TestReviewBaseKeptAcrossReload(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("l1\nl2\nl3\n"), 0644)
+	mdPath := filepath.Join(dir, "REVIEW.md")
+
+	st, err := Load(mdPath, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetBase("recorded base")
+	if err := st.Set("a.go", 2, "a comment"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh invocation naming a different base keeps its own.
+	other, err := Load(mdPath, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.SetBase("invocation base")
+	if _, err := other.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Set("a.go", 3, "another comment"); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := parse(mdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.base != "invocation base" {
+		t.Errorf("base: got %q, want %q", meta.base, "invocation base")
+	}
+}
+
+// TestReviewBaseKeptAcrossNewReview verifies that starting a new review keeps
+// the base, so the review that follows is made against the same point in
+// history rather than losing its label.
+func TestReviewBaseKeptAcrossNewReview(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("l1\nl2\nl3\n"), 0644)
+	mdPath := filepath.Join(dir, "REVIEW.md")
+
+	st, err := Load(mdPath, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetBase("a base")
+	if err := st.Set("a.go", 2, "a comment"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ArchiveReview(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set("a.go", 3, "after the new review"); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := parse(mdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.base != "a base" {
+		t.Errorf("base: got %q, want %q", meta.base, "a base")
 	}
 }
 
