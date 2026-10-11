@@ -65,7 +65,8 @@ By default the server listens on the loopback interface only, so the reviewed so
 |------|---------|-------------|
 | `-dir` | `.` | Root directory of the project to review |
 | `-port` | `7070` | HTTP server port |
-| `-host` | `127.0.0.1` | Address to listen on; a non-loopback host needs the access token printed at startup |
+| `-host` | `127.0.0.1` | Address to listen on; a non-loopback address reaches the LAN and needs the access token printed at startup |
+| `-http-host` | derived from `-host` | Hostname used in the opening URL and browser redirect; a wildcard bind uses the machine's primary address |
 
 ### Reviewing over the Network
 
@@ -74,17 +75,24 @@ With `-host` set to something other than the loopback interface (for example on 
 ```sh
 ./review -host 0.0.0.0
 # ...
-# Code Review running at http://0.0.0.0:7070
+# Code Review running at http://192.168.1.66:7070
+# Listening on 0.0.0.0:7070
 # Listening beyond the loopback interface. Open this URL to
 # authorise your browser, then browse normally (the token is kept
 # in a cookie):
 #
-#   http://0.0.0.0:7070/?token=9f2c...e1
+#   http://192.168.1.66:7070/?token=9f2c...e1
 #
 # Anyone with the token can read the reviewed sources.
 ```
 
-Open the printed URL once: the token is stored in a cookie and dropped from the address bar, so normal browsing (assets, API calls, the live-update WebSocket) works without it in the URL. Without the token every request is refused with `401 Unauthorized`. The token is only generated when the host is not a loopback address, so local use is unaffected.
+A wildcard bind (`0.0.0.0` or `::`) listens on every interface but is not an address a client can open, so the printed URL uses the machine's primary address instead. Pass `-http-host` when that address is not the one you reach the machine by (a DNS name, a VPN address, a second interface):
+
+```sh
+./review -host 0.0.0.0 -http-host devbox.lan
+```
+
+Open the printed URL once: the token is stored in a cookie and dropped from the address bar, so normal browsing (assets, API calls, the live-update WebSocket) works without it in the URL. Without the token every request is refused with `401 Unauthorized`. The token is only generated when the host is not a loopback address, so local use is unaffected. A browser is only opened automatically when the URL points back at this machine.
 
 ### Comparing Against a Base Revision
 
