@@ -15,7 +15,8 @@ const contextMarker = "context"
 
 var (
 	fileHeaderRe  = regexp.MustCompile("^## `(.+)`$")
-	lineHeaderRe  = regexp.MustCompile(`^#### Line (\d+)(.*)$`)
+	singleLineRe  = regexp.MustCompile(`^#### Line (\d+)(.*)$`)
+	rangeLineRe   = regexp.MustCompile(`^#### Lines (\d+)-(\d+)(.*)$`)
 	contextLineRe = regexp.MustCompile(`^(\d+):(?: (.*))?$`)
 	startedRe     = regexp.MustCompile(`^_Started: (.+)_$`)
 	baseRe        = regexp.MustCompile(`^_Base: (.+)_$`)
@@ -34,6 +35,10 @@ type reviewMeta struct {
 	created  string
 	modified string
 }
+
+// lineHeaderRe matches either form of line heading, so a structural check
+// covers both without repeating them.
+var lineHeaderRe = regexp.MustCompile(`^#### Lines? `)
 
 // parse reads a REVIEW.md file and returns the annotations together with the
 // review's own record, which is empty for a file that carries none.
@@ -62,6 +67,7 @@ func parse(path string) (reviewMeta, error) {
 		meta        reviewMeta
 		currentFile string
 		currentLine int
+		startLine   int
 		outdated    bool
 		body        []string
 		collecting  bool
@@ -77,6 +83,7 @@ func parse(path string) (reviewMeta, error) {
 		if comment != "" && currentFile != "" {
 			data[currentFile][currentLine] = &Annotation{
 				Comment:     comment,
+				StartLine:   startLine,
 				Context:     context,
 				ContextFrom: contextFrom,
 				Outdated:    outdated,
@@ -105,9 +112,18 @@ func parse(path string) (reviewMeta, error) {
 			continue
 		}
 
-		if m := lineHeaderRe.FindStringSubmatch(line); m != nil && currentFile != "" {
+		if m := rangeLineRe.FindStringSubmatch(line); m != nil && currentFile != "" {
+			save()
+			currentLine, _ = strconv.Atoi(m[2])
+			startLine, _ = strconv.Atoi(m[1])
+			outdated = strings.Contains(m[3], "outdated")
+			collecting = true
+			continue
+		}
+		if m := singleLineRe.FindStringSubmatch(line); m != nil && currentFile != "" {
 			save()
 			currentLine, _ = strconv.Atoi(m[1])
+			startLine = currentLine
 			outdated = strings.Contains(m[2], "outdated")
 			collecting = true
 			continue
