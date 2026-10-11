@@ -58,7 +58,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, string, func()) {
 		t.Fatal(err)
 	}
 
-	handler := New(st, tmpDir, gitstatus.Base{}, os.DirFS(frontendDir), nil)
+	handler := New(st, tmpDir, gitstatus.Base{}, os.DirFS(frontendDir), nil, "")
 	ts := httptest.NewServer(handler)
 
 	return ts, tmpDir, func() {

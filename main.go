@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -28,6 +30,7 @@ var frontendFS embed.FS
 func main() {
 	port := flag.Int("port", 7070, "HTTP server port")
 	dir := flag.String("dir", ".", "Root directory to review")
+	host := flag.String("host", "127.0.0.1", "Address to listen on; a non-loopback host needs the access token printed at startup")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -91,12 +94,21 @@ func main() {
 		server.BridgeWatcher(hub, st, w)
 	}
 
-	handler := server.New(st, rootDir, baseCommit, subFS, hub)
+	// A review exposes the whole source tree and has no access control of its
+	// own, so listening beyond the loopback interface is guarded by an access
+	// token rather than left open to the network.
+	token := ""
+	if !isLoopback(*host) {
+		token, err = server.NewToken(32)
+		if err != nil {
+			log.Fatalf("Failed to generate access token: %v", err)
+		}
+	}
 
-	// Bind to the loopback interface only: a review exposes the whole source
-	// tree and has no access control of its own.
-	addr := fmt.Sprintf("127.0.0.1:%d", *port)
-	url := fmt.Sprintf("http://127.0.0.1:%d", *port)
+	handler := server.New(st, rootDir, baseCommit, subFS, hub, token)
+
+	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
+	url := "http://" + addr
 	fmt.Printf("Code Review running at %s\n", url)
 	fmt.Printf("Reviewing: %s\n", rootDir)
 	if baseCommit.Commit != "" {
@@ -104,7 +116,15 @@ func main() {
 	}
 	fmt.Printf("Annotations: %s\n", st.MdPath())
 
-	go openBrowser(url)
+	if token != "" {
+		fmt.Printf("\nListening beyond the loopback interface. Open this URL to\n")
+		fmt.Printf("authorise your browser, then browse normally (the token is kept\n")
+		fmt.Printf("in a cookie):\n\n  %s/?token=%s\n", url, token)
+		fmt.Printf("\nAnyone with the token can read the reviewed sources.\n")
+		go openBrowser(fmt.Sprintf("%s/?token=%s", url, token))
+	} else {
+		go openBrowser(url)
+	}
 
 	srv := &http.Server{Addr: addr, Handler: handler}
 
@@ -142,6 +162,17 @@ func runSetupReviewHistory(rootDir string) {
 		fmt.Printf("Created %s\n", path)
 	}
 	fmt.Println("Starting a new review will now move REVIEW.md into " + store.ReviewDir + "/")
+}
+
+// isLoopback reports whether host names the local machine, so binding to it
+// reaches only this machine and needs no access token. An empty host (all
+// interfaces) is not loopback.
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // usage prints the command line syntax, including the optional base revision

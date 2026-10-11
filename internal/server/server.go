@@ -21,10 +21,15 @@ const highlightCacheSize = 32 << 20 // 32 MiB
 // frontendFS should be the embedded frontend filesystem (already sub'd to the frontend root).
 // base is the commit to compare against; its zero value compares against HEAD.
 // hub may be nil if WebSocket support is not needed.
-func New(st *store.Store, rootDir string, base gitstatus.Base, frontendFS fs.FS, hub *Hub) http.Handler {
+// token, when non-empty, is required on every request, so a review served
+// beyond the loopback interface is not open to anyone who can reach the port.
+func New(st *store.Store, rootDir string, base gitstatus.Base, frontendFS fs.FS, hub *Hub, token string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	if token != "" {
+		r.Use(TokenAuth(token))
+	}
 
 	h := &handlers{
 		store:       st,

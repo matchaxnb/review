@@ -20,6 +20,7 @@ The tool was vibecoded as a simple way to review agentic coded files. The markdo
 - **Graceful shutdown** — the browser tab closes automatically when the server stops
 - **Markdown storage** — all annotations are saved to `REVIEW.md` with surrounding code context and a header naming the commit the review was taken from, making them easy to read and share without the tool
 - **Single binary** — the web frontend is embedded in the Go binary; no external files or dependencies needed at runtime
+- **Optional network access** — bind beyond the loopback interface with `-host`; a per-run access token then guards the review
 
 ## Building
 
@@ -49,11 +50,14 @@ make
 
 # Enable review history for a project (keeps retired reviews)
 ./review setup-review-history
+
+# Review code on a remote workstation, reachable over the LAN
+./review -host 0.0.0.0 -port 8080
 ```
 
 Then open `http://127.0.0.1:7070` (or your chosen port) in a browser (should happen automatically).
 
-The server listens on the loopback interface only, so the reviewed sources are not reachable from other machines.
+By default the server listens on the loopback interface only, so the reviewed sources are not reachable from other machines.
 
 ### Flags
 
@@ -61,6 +65,26 @@ The server listens on the loopback interface only, so the reviewed sources are n
 |------|---------|-------------|
 | `-dir` | `.` | Root directory of the project to review |
 | `-port` | `7070` | HTTP server port |
+| `-host` | `127.0.0.1` | Address to listen on; a non-loopback host needs the access token printed at startup |
+
+### Reviewing over the Network
+
+With `-host` set to something other than the loopback interface (for example on a remote workstation), the review is reachable from the LAN. Because a review exposes the whole source tree, that case is guarded by an access token, generated fresh for each run and printed on startup:
+
+```sh
+./review -host 0.0.0.0
+# ...
+# Code Review running at http://0.0.0.0:7070
+# Listening beyond the loopback interface. Open this URL to
+# authorise your browser, then browse normally (the token is kept
+# in a cookie):
+#
+#   http://0.0.0.0:7070/?token=9f2c...e1
+#
+# Anyone with the token can read the reviewed sources.
+```
+
+Open the printed URL once: the token is stored in a cookie and dropped from the address bar, so normal browsing (assets, API calls, the live-update WebSocket) works without it in the URL. Without the token every request is refused with `401 Unauthorized`. The token is only generated when the host is not a loopback address, so local use is unaffected.
 
 ### Comparing Against a Base Revision
 
