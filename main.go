@@ -30,7 +30,8 @@ var frontendFS embed.FS
 func main() {
 	port := flag.Int("port", 7070, "HTTP server port")
 	dir := flag.String("dir", ".", "Root directory to review")
-	host := flag.String("host", "127.0.0.1", "Address to listen on; a non-loopback host needs the access token printed at startup")
+	bindHost := flag.String("host", "127.0.0.1", "Address to listen on; 0.0.0.0 reaches the LAN and needs the access token printed at startup")
+	httpHost := flag.String("http-host", "", "Hostname to use in the opening URL and browser redirect (default: derived from -host; a wildcard bind falls back to 127.0.0.1)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -89,18 +90,29 @@ func main() {
 	// own, so listening beyond the loopback interface is guarded by an access
 	// token rather than left open to the network.
 	token := ""
-	if !isLoopback(*host) {
+	if !isLoopback(*bindHost) {
 		token, err = server.NewToken(32)
 		if err != nil {
 			log.Fatalf("Failed to generate access token: %v", err)
 		}
 	}
 
+	// The address to listen on and the host a browser should use are not the
+	// same: a wildcard bind (0.0.0.0, ::) is not a reachable address, so the
+	// browsable host is a real one, overridable for a name the client resolves.
+	brHost := browserHost(*httpHost, *bindHost)
 	handler := server.New(st, rootDir, baseCommit, subFS, hub, token)
 
-	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
-	url := "http://" + addr
+	bindAddr := net.JoinHostPort(*bindHost, strconv.Itoa(*port))
+	url := "http://" + net.JoinHostPort(brHost, strconv.Itoa(*port))
+	launchURL := url
+	if token != "" {
+		launchURL = url + "/?token=" + token
+	}
 	fmt.Printf("Code Review running at %s\n", url)
+	if *bindHost != brHost {
+		fmt.Printf("Listening on %s\n", bindAddr)
+	}
 	fmt.Printf("Reviewing: %s\n", rootDir)
 	if baseCommit.Commit != "" {
 		fmt.Printf("Comparing against: %s (%s)\n", baseCommit.Rev, baseCommit.Commit[:7])
@@ -112,12 +124,18 @@ func main() {
 		fmt.Printf("authorise your browser, then browse normally (the token is kept\n")
 		fmt.Printf("in a cookie):\n\n  %s/?token=%s\n", url, token)
 		fmt.Printf("\nAnyone with the token can read the reviewed sources.\n")
-		go openBrowser(fmt.Sprintf("%s/?token=%s", url, token))
 	} else {
-		go openBrowser(url)
+		fmt.Printf("\nOpen %s in a browser.\n", url)
 	}
 
-	srv := &http.Server{Addr: addr, Handler: handler}
+	// Only try to open a browser when the address it would be opened at is this
+	// machine's own: a review served for another machine has no local display to
+	// open, and the URL is printed for the client instead.
+	if isLoopback(brHost) {
+		go openBrowser(launchURL)
+	}
+
+	srv := &http.Server{Addr: bindAddr, Handler: handler}
 
 	// Graceful shutdown: catch signals, notify clients, then stop
 	sigCh := make(chan os.Signal, 1)
@@ -147,6 +165,39 @@ func isLoopback(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// browserHost returns the host a client should use to reach the server, given
+// the optional -http-host override and the address the server binds. A wildcard
+// bind (0.0.0.0 or ::) listens on every interface but is not itself a reachable
+// address, so the machine's primary address is used instead; -http-host names it
+// explicitly when that address is not the one a client should use.
+func browserHost(httpHost, bindHost string) string {
+	if httpHost != "" {
+		return httpHost
+	}
+	if ip := net.ParseIP(bindHost); ip != nil && ip.IsUnspecified() {
+		if primary := primaryIP(); primary != "" {
+			return primary
+		}
+		return "127.0.0.1"
+	}
+	return bindHost
+}
+
+// primaryIP returns the machine's own address on the route it would use to leave
+// the host, which is the one a client on the same network reaches it by. It
+// returns an empty string when there is no such route (an isolated host).
+func primaryIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return addr.IP.String()
+	}
+	return ""
 }
 
 // usage prints the command line syntax, including the optional base revision
