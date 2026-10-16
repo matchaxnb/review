@@ -583,6 +583,138 @@ body {
   background: rgba(220, 38, 38, 0.1);
 }
 
+/* Side-by-side diff: the base revision's lines on the left, the reviewed
+   tree's on the right, a row shared where git replaced one line with another. */
+.diff-tooltip.side-by-side {
+  padding: 0;
+  max-width: none;
+  min-width: 34rem;
+}
+
+.sb-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--rv-border);
+  background: var(--rv-bg);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.sb-head .sb-col {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--rv-muted);
+}
+
+.sb-head .sb-pin {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.65rem;
+  border-color: var(--rv-border);
+  background: transparent;
+  color: var(--rv-muted);
+}
+
+.sb-head .sb-pin:hover {
+  background: var(--rv-border);
+  color: var(--rv-color);
+}
+
+.sb-head .sb-pin.active {
+  background: var(--rv-primary);
+  border-color: var(--rv-primary);
+  color: #fff;
+}
+
+.sb-foot {
+  padding: 0.3rem 0.6rem;
+  border-top: 1px solid var(--rv-border);
+  background: var(--rv-bg);
+  font-size: 0.65rem;
+  color: var(--rv-muted);
+  position: sticky;
+  bottom: 0;
+}
+
+/* The hint below the hunk only applies once the pane is pinned. */
+.diff-tooltip:not(.pinned) .sb-foot {
+  display: none;
+}
+
+/* Docked: a pane down the side of the code view rather than a bubble under
+   the pointer. The header stops following once it is put there. */
+.diff-tooltip.pinned .sb-head {
+  position: static;
+}
+
+.sb-grid {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sb-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.sb-cell {
+  display: flex;
+  flex: 1 1 50%;
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+.sb-cell.sb-old {
+  border-right: 1px solid var(--rv-border);
+}
+
+.sb-cell .sb-no {
+  flex: 0 0 auto;
+  min-width: 2.5rem;
+  padding: 0 0.4rem;
+  text-align: right;
+  color: var(--rv-muted);
+  opacity: 0.6;
+  user-select: none;
+  border-right: 1px solid var(--rv-border);
+}
+
+.sb-cell .sb-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 0.5rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sb-cell.sb-blank {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 4px,
+    rgba(127, 127, 127, 0.07) 4px,
+    rgba(127, 127, 127, 0.07) 8px
+  );
+}
+
+.sb-cell.sb-add {
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.sb-cell.sb-del {
+  background: rgba(220, 38, 38, 0.12);
+}
+
 /* Commit history bar (review a specific commit vs. its parent) */
 .commit-bar {
   display: flex;

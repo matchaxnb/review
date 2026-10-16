@@ -21,7 +21,9 @@ const highlightCacheSize = 32 << 20 // 32 MiB
 // frontendFS should be the embedded frontend filesystem (already sub'd to the frontend root).
 // base is the commit to compare against; its zero value compares against HEAD.
 // hub may be nil if WebSocket support is not needed.
-func New(st *store.Store, rootDir string, base gitstatus.Base, frontendFS fs.FS, hub *Hub) http.Handler {
+// sideBySide reports whether the frontend offers a side-by-side view of a diff
+// hunk; it is passed on to clients as a setting.
+func New(st *store.Store, rootDir string, base gitstatus.Base, frontendFS fs.FS, hub *Hub, sideBySide bool) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
@@ -31,6 +33,7 @@ func New(st *store.Store, rootDir string, base gitstatus.Base, frontendFS fs.FS,
 		rootDir:     rootDir,
 		base:        base,
 		highlighter: highlight.NewCache(highlightCacheSize),
+		sideBySide:  sideBySide,
 	}
 
 	// Serve frontend

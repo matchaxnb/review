@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
 // LineChange represents the type of change for a line.
@@ -43,11 +42,24 @@ type DiffDeletion struct {
 	HunkIndex int `json:"hunkIndex"` // index into DiffHunks for tooltip
 }
 
-// DiffHunk represents a single diff hunk with its affected line range and raw diff text.
+// DiffHunk represents a single diff hunk with its affected line range and the
+// lines it covers, laid out for a side-by-side view.
 type DiffHunk struct {
-	StartLine int    `json:"startLine"` // first new-file line in hunk
-	EndLine   int    `json:"endLine"`   // last new-file line in hunk
-	Diff      string `json:"diff"`      // raw diff lines (- and + lines)
+	StartLine int       `json:"startLine"` // first new-file line in hunk
+	EndLine   int       `json:"endLine"`   // last new-file line in hunk
+	Rows      []DiffRow `json:"rows"`      // the hunk's lines, one row per line of either version
+}
+
+// DiffRow is one line of a hunk as a side-by-side view reads it: a line of the
+// old file and the line of the new file that stands opposite it. A row the old
+// file does not have there (an added line) carries no old number, one the new
+// file does not have (a removed line) no new number. A replaced line shares one
+// row, removed on the left and added on the right.
+type DiffRow struct {
+	OldNo int    `json:"oldNo,omitempty"` // line number in the old file, 0 when the row has no old line
+	NewNo int    `json:"newNo,omitempty"` // line number in the new file, 0 when the row has no new line
+	Old   string `json:"old"`             // text of the old line, empty when the row has none
+	New   string `json:"new"`             // text of the new line, empty when the row has none
 }
 
 // GetFileDiff returns all diff information for a file. With a base commit set,
@@ -83,7 +95,7 @@ func GetFileDiff(dir string, base Base, filePath string, content []byte) *FileDi
 	}
 	if untracked.err == nil && len(untracked.out) > 0 {
 		// The file is new to git, so all of it is new
-		return &FileDiffInfo{Lines: allLinesAdded(content)}
+		return allLinesAdded(content)
 	}
 	return &FileDiffInfo{}
 }
@@ -101,7 +113,7 @@ func GetFileDiffAt(dir, fromRev, toRev, filePath string, content []byte) *FileDi
 	}
 	// No diff output: added (absent at fromRev) or unchanged.
 	if _, e := Show(dir, fromRev, filePath); e != nil {
-		return &FileDiffInfo{Lines: allLinesAdded(content)}
+		return allLinesAdded(content)
 	}
 	return &FileDiffInfo{}
 }
@@ -120,23 +132,30 @@ func parseDiff(out []byte) *FileDiffInfo {
 	scanner.Buffer(make([]byte, 0, 64*1024), maxDiffLine)
 
 	var (
-		current   *DiffHunk       // hunk being read
-		body      strings.Builder // raw diff text of the hunk being read
-		newLine   int             // next line number in the new file
-		removed   int             // removed lines seen since the last unchanged line
-		replacing bool            // the run of added lines replaces removed ones
+		current *DiffHunk // hunk being read
+		oldLine int       // next line number in the old file
+		newLine int       // next line number in the new file
+		removed []DiffRow // removed rows of the change block being read
+		added   []DiffRow // added rows of the change block being read
 	)
 
-	// keep records a line as part of the hunk being read.
-	keep := func(line string) {
-		body.WriteString(line)
-		body.WriteByte('\n')
-	}
-
-	// endRun closes a run of removed lines, recording a deletion marker for
-	// those that nothing was put in place of.
-	endRun := func() {
-		if removed > 0 {
+	// flushBlock ends the block of changed lines being read, turning it into
+	// rows: the removed rows and the added ones are set against each other by
+	// position, so a line replaced by another shares one row. What one side has
+	// beyond the other keeps a row of its own, blank opposite it. Removed rows
+	// that nothing was put in place of leave a deletion marker sitting after
+	// the last line that survived.
+	flushBlock := func() {
+		pair := len(added)
+		if len(removed) < pair {
+			pair = len(removed)
+		}
+		for i := range pair {
+			added[i].OldNo = removed[i].OldNo
+			added[i].Old = removed[i].Old
+		}
+		current.Rows = append(current.Rows, added[:pair]...)
+		if len(removed) > pair {
 			after := newLine - 1
 			if after < 0 {
 				after = 0
@@ -145,9 +164,12 @@ func parseDiff(out []byte) *FileDiffInfo {
 				AfterLine: after,
 				HunkIndex: len(info.Hunks),
 			})
-			removed = 0
+			current.Rows = append(current.Rows, removed[pair:]...)
+		} else {
+			current.Rows = append(current.Rows, added[pair:]...)
 		}
-		replacing = false
+		removed = removed[:0]
+		added = added[:0]
 	}
 
 	// endHunk finishes the hunk being read.
@@ -155,9 +177,7 @@ func parseDiff(out []byte) *FileDiffInfo {
 		if current == nil {
 			return
 		}
-		endRun()
-		current.Diff = body.String()
-		body.Reset()
+		flushBlock()
 		info.Hunks = append(info.Hunks, *current)
 		current = nil
 	}
@@ -174,13 +194,15 @@ func parseDiff(out []byte) *FileDiffInfo {
 
 		if m := hunkRe.FindStringSubmatch(line); m != nil {
 			endHunk()
+			oldStart, _ := strconv.Atoi(m[1])
 			newStart, _ := strconv.Atoi(m[3])
 			newCount := 1
 			if m[4] != "" {
 				newCount, _ = strconv.Atoi(m[4])
 			}
 			current = &DiffHunk{StartLine: newStart, EndLine: newStart + newCount - 1}
-			newLine = newStart
+			oldLine, newLine = oldStart, newStart
+			removed, added = nil, nil
 			continue
 		}
 
@@ -191,38 +213,38 @@ func parseDiff(out []byte) *FileDiffInfo {
 
 		if line == "" {
 			// An unchanged empty line is written without its leading space
-			endRun()
-			keep("")
+			flushBlock()
+			current.Rows = append(current.Rows, DiffRow{OldNo: oldLine, NewNo: newLine})
+			oldLine++
 			newLine++
 			continue
 		}
 
 		switch line[0] {
 		case ' ':
-			endRun()
-			keep(line)
+			flushBlock()
+			body := line[1:]
+			current.Rows = append(current.Rows, DiffRow{OldNo: oldLine, NewNo: newLine, Old: body, New: body})
+			oldLine++
 			newLine++
 		case '-':
-			if replacing {
-				endRun() // a new run of changes starts
-			}
-			removed++
-			keep(line)
+			removed = append(removed, DiffRow{OldNo: oldLine, Old: line[1:]})
+			oldLine++
 		case '+':
-			if removed > 0 {
-				replacing = true
-				removed = 0 // replaced, not deleted
-			}
-			if replacing {
+			// A line put where removed ones stood is a modification of them, a
+			// line put where nothing was removed is one git added. The block
+			// being read settles that, and the whole block is marked once when
+			// it ends.
+			if len(removed) > 0 {
 				mark(LineModified)
 			} else {
 				mark(LineAdded)
 			}
-			keep(line)
+			added = append(added, DiffRow{NewNo: newLine, New: line[1:]})
 			newLine++
 		case '\\':
-			// "\ No newline at end of file"
-			keep(line)
+			// "\ No newline at end of file": no line of its own, and the row
+			// above already carries the text.
 		default:
 			endHunk()
 		}
@@ -232,18 +254,20 @@ func parseDiff(out []byte) *FileDiffInfo {
 	return info
 }
 
-// allLinesAdded marks every line of the given content as "added".
-func allLinesAdded(content []byte) map[int]LineChange {
+// allLinesAdded marks every line of the given content as "added". Nothing is
+// set against them, since the file did not exist before, so there is no hunk to
+// show either side by side or as a diff.
+func allLinesAdded(content []byte) *FileDiffInfo {
 	n := bytes.Count(content, []byte{'\n'})
 	if len(content) > 0 && content[len(content)-1] != '\n' {
 		n++ // file doesn't end with newline
 	}
 	if n == 0 {
-		return nil
+		return &FileDiffInfo{}
 	}
 	result := make(map[int]LineChange, n)
 	for i := 1; i <= n; i++ {
 		result[i] = LineAdded
 	}
-	return result
+	return &FileDiffInfo{Lines: result}
 }

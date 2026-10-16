@@ -155,6 +155,23 @@ func TestParseDiff_Deletions(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "deletion when fewer lines replace more",
+			diff: `diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1,5 +1,3 @@
+ keep
+-old1
+-old2
+-old3
++new1
+ tail
+`,
+			want: []DiffDeletion{
+				{AfterLine: 2, HunkIndex: 0},
+			},
+		},
+		{
 			name: "deletion at top of file",
 			diff: `diff --git a/foo.go b/foo.go
 --- a/foo.go
@@ -225,11 +242,94 @@ func TestParseDiff_Hunks(t *testing.T) {
 	if hunks[0].StartLine != 1 || hunks[0].EndLine != 4 {
 		t.Errorf("first hunk range: got %d-%d, want 1-4", hunks[0].StartLine, hunks[0].EndLine)
 	}
-	if hunks[0].Diff != " keep\n-old\n+new\n+extra\n" {
-		t.Errorf("unexpected hunk text: %q", hunks[0].Diff)
+	// The hunk pairs the removed line with the first line that replaced it and
+	// leaves the extra added line a row of its own.
+	wantRows := []DiffRow{
+		{OldNo: 1, NewNo: 1, Old: "keep", New: "keep"},
+		{OldNo: 2, NewNo: 2, Old: "old", New: "new"},
+		{NewNo: 3, New: "extra"},
+	}
+	if !reflect.DeepEqual(hunks[0].Rows, wantRows) {
+		t.Errorf("first hunk rows:\n got %+v\nwant %+v", hunks[0].Rows, wantRows)
 	}
 	if hunks[1].StartLine != 21 || hunks[1].EndLine != 22 {
 		t.Errorf("second hunk range: got %d-%d, want 21-22", hunks[1].StartLine, hunks[1].EndLine)
+	}
+}
+
+// TestParseDiff_Rows covers the side-by-side layout: which lines share a row,
+// and which side a row with only one version belongs to. The rows of a hunk
+// together have to account for every line of both files it spans, or the two
+// columns drift apart.
+func TestParseDiff_Rows(t *testing.T) {
+	tests := []struct {
+		name string
+		diff string
+		want []DiffRow
+	}{
+		{
+			name: "addition and replacement in one hunk",
+			diff: `diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1,3 +1,4 @@
+ keep
+-old
++new
++extra
+`,
+			want: []DiffRow{
+				{OldNo: 1, NewNo: 1, Old: "keep", New: "keep"},
+				{OldNo: 2, NewNo: 2, Old: "old", New: "new"},
+				{NewNo: 3, New: "extra"},
+			},
+		},
+		{
+			name: "more removals than additions leaves the extra ones old-only",
+			diff: `diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1,5 +1,2 @@
+-old1
+-old2
+-old3
++new1
+ keep
+`,
+			want: []DiffRow{
+				{OldNo: 1, NewNo: 1, Old: "old1", New: "new1"},
+				{OldNo: 2, Old: "old2"},
+				{OldNo: 3, Old: "old3"},
+				{OldNo: 4, NewNo: 2, Old: "keep", New: "keep"},
+			},
+		},
+		{
+			name: "no newline at end of file marker adds no row",
+			diff: `diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1 +1 @@
+-old
+\ No newline at end of file
++new
+\ No newline at end of file
+`,
+			want: []DiffRow{
+				{OldNo: 1, NewNo: 1, Old: "old", New: "new"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hunks := parseDiff([]byte(tt.diff)).Hunks
+			if len(hunks) != 1 {
+				t.Fatalf("expected 1 hunk, got %d", len(hunks))
+			}
+			if !reflect.DeepEqual(hunks[0].Rows, tt.want) {
+				t.Errorf("rows:\n got %+v\nwant %+v", hunks[0].Rows, tt.want)
+			}
+		})
 	}
 }
 

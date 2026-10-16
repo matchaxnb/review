@@ -28,6 +28,7 @@ var frontendFS embed.FS
 func main() {
 	port := flag.Int("port", 7070, "HTTP server port")
 	dir := flag.String("dir", ".", "Root directory to review")
+	sideBySide := flag.Bool("side-by-side", true, "Offer a side-by-side view of diff hunks (disable with -side-by-side=false)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -91,7 +92,7 @@ func main() {
 		server.BridgeWatcher(hub, st, w)
 	}
 
-	handler := server.New(st, rootDir, baseCommit, subFS, hub)
+	handler := server.New(st, rootDir, baseCommit, subFS, hub, *sideBySide)
 
 	// Bind to the loopback interface only: a review exposes the whole source
 	// tree and has no access control of its own.

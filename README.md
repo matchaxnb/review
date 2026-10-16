@@ -10,7 +10,7 @@ The tool was vibecoded as a simple way to review agentic coded files. The markdo
 - **Inline annotations** — click any line to add, edit, or delete review comments, or highlight several lines to comment on a range
 - **Syntax highlighting** — powered by [Chroma](https://github.com/alecthomas/chroma)
 - **Git status integration** — files and directories are color-coded by git status (modified, staged, untracked, etc.)
-- **Git diff markers** — changed, added, and deleted lines are marked in the gutter; hover to see the full diff hunk
+- **Git diff markers** — changed, added, and deleted lines are marked in the gutter; hover to see the hunk as a side-by-side diff, with the base revision's lines opposite the reviewed ones
 - **Compare against a base** — review an already committed branch by diffing it against a branch, tag, or commit
 - **Scrollbar annotations** — colored markers on the scrollbar show where comments and changes are in long files
 - **Live updates** — files reload automatically when changed on disk via WebSocket-based file watching
@@ -61,6 +61,7 @@ The server listens on the loopback interface only, so the reviewed sources are n
 |------|---------|-------------|
 | `-dir` | `.` | Root directory of the project to review |
 | `-port` | `7070` | HTTP server port |
+| `-side-by-side` | `true` | Show each diff hunk as two columns; pass `-side-by-side=false` for the older one-column diff |
 
 ### Comparing Against a Base Revision
 
@@ -73,6 +74,12 @@ By default, files and lines are highlighted by their working tree changes, so no
 ```
 
 Highlighting and diff hunks then cover everything that changed between that revision and the current working tree, committed or not. The comparison starts at the merge base of the given revision and `HEAD`, so commits made on the base branch after branching off are not shown as changes. The active base is displayed in the status bar.
+
+### Reading a Diff Side by Side
+
+Hovering a changed line's gutter shows its hunk with the base revision on the left and the file under review on the right. A line git replaced shares one row — removed on the left, added on the right — while a line only one side has leaves the other blank. **pin** in the pane's header keeps the hunk open as a pane down the side of the code view, for a long hunk that has to be read or scrolled; Esc puts it away.
+
+The left column is a reading aid only. Annotations are still made on the file under review, and only there: the pane cannot be clicked to comment, so a review never lands on the base revision.
 
 ### Review History
 

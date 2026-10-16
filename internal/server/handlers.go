@@ -27,6 +27,9 @@ type handlers struct {
 	// frontend selects a commit and the server shows that commit's tree,
 	// diffed against its parent. Empty = working tree (the original mode).
 	rev string
+	// sideBySide reports whether the frontend offers a side-by-side view of
+	// the diff hunk under the pointer.
+	sideBySide bool
 }
 
 func (h *handlers) handleTree(w http.ResponseWriter, r *http.Request) {
@@ -317,10 +320,15 @@ type configResponse struct {
 	Base           string `json:"base"`                  // revision changes are compared against, empty when comparing against HEAD
 	HistoryEnabled bool   `json:"historyEnabled"`        // whether starting a new review archives the old one instead of deleting it
 	HistoryDest    string `json:"historyDest,omitempty"` // where the current review would be archived, relative to the review root
+	SideBySide     bool   `json:"sideBySide"`            // whether the side-by-side view is available
 }
 
 func (h *handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
-	resp := configResponse{Base: h.base.Rev, HistoryEnabled: h.store.HistoryEnabled()}
+	resp := configResponse{
+		Base:           h.base.Rev,
+		HistoryEnabled: h.store.HistoryEnabled(),
+		SideBySide:     h.sideBySide,
+	}
 	if dest, ok := h.store.NextHistoryDest(); ok {
 		resp.HistoryDest = dest
 	}

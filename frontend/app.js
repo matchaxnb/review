@@ -28,6 +28,7 @@
     revCache: {},
     historyEnabled: false, // retired reviews are kept rather than deleted
     historyDest: '',       // where the current review would be moved on the next one
+    sideBySide: true,      // show diff hunks as two columns (the server can turn this off)
   };
 
   let ws = null;
@@ -333,6 +334,7 @@
     updateCommitNav();
     state.currentFile = null;
     state.scrollPositions = {};
+    hideDiffTooltip(); // it was drawn from the revision being left
     if (state.rev && state.revCache[state.rev]) {
       const c = state.revCache[state.rev];
       state.tree = c.tree;
@@ -350,6 +352,7 @@
   function applyConfig(config) {
     state.historyEnabled = !!config.historyEnabled;
     state.historyDest = config.historyDest || '';
+    state.sideBySide = config.sideBySide !== false;
     if (config.base && statusBase) {
       statusBase.textContent = 'compared to ' + config.base;
       statusBase.title = 'Changes are highlighted relative to ' + config.base;
@@ -516,6 +519,10 @@
   async function loadCurrentFile(annotations, scrollTop = codeContent.scrollTop) {
     const path = state.currentFile;
     if (!path) return;
+
+    // Whatever hunk is on screen belongs to the file being replaced, so it
+    // goes first: the diff data it was drawn from is about to be replaced too.
+    hideDiffTooltip();
 
     const [fileData, annData] = await Promise.all([
       api('GET', withRev('/api/file?path=' + encodeURIComponent(path))),
@@ -1027,28 +1034,118 @@
     return String(str).replace(/[&<>"']/g, ch => htmlEscapes[ch]);
   }
 
-  // Diff tooltip
+  // Diff tooltip: the hunk under the pointer, shown with the base revision's
+  // lines on the left and the reviewed tree's lines on the right. The left
+  // side is there to be read — annotations stay where they belong, on the
+  // lines of the tree under review.
   let diffTooltip = null;
   let diffTooltipHunk = null;
   let diffTooltipMoveHandler = null;
   let diffTooltipBounds = null;
   let diffTooltipRaf = null;
+  let diffTooltipPinned = false;
+
+  // sbLeftLabel names the revision the left column holds: the base the review
+  // is measured against, or, when a single commit is being stepped through,
+  // that commit's parent, which is what its diff is taken from.
+  function sbLeftLabel() {
+    if (!state.rev) return state.baseRev || 'HEAD';
+    const c = state.commits.find(c => c.hash === state.rev);
+    if (!c) return state.rev.slice(0, 8) + '^';
+    return c.short + '^';
+  }
+
+  // diffTooltipContent renders a hunk the way the current setting asks for.
+  function diffTooltipContent(hunk) {
+    return state.sideBySide ? hunkSideBySide(hunk) : hunkUnified(hunk);
+  }
+
+  // hunkSideBySide builds one hunk as two columns of numbered lines. A row
+  // git replaced reads as a removal on the left and an addition on the right,
+  // a row only one side has leaves the other blank.
+  function hunkSideBySide(hunk) {
+    const rows = hunk.rows || [];
+    const cells = rows.map(row => {
+      const both = row.oldNo && row.newNo;
+      const equal = both && row.old === row.new;
+      const oldCls = row.oldNo && !equal ? ' sb-del' : '';
+      const newCls = row.newNo && !equal ? ' sb-add' : '';
+      const oldBody = row.oldNo ? escapeHtml(row.old) : '';
+      const newBody = row.newNo ? escapeHtml(row.new) : '';
+      return '<div class="sb-row">' +
+        sbCell('old', row.oldNo, oldCls, oldBody) +
+        sbCell('new', row.newNo, newCls, newBody) +
+        '</div>';
+    }).join('');
+    return '<div class="sb-head">' +
+        '<span class="sb-col">' + escapeHtml(sbLeftLabel()) + '</span>' +
+        '<span class="sb-col">' + escapeHtml(annotateTargetLabel()) + '</span>' +
+        '<button type="button" class="sb-pin" title="Keep this hunk open beside the code">pin</button>' +
+      '</div>' +
+      '<div class="sb-grid">' + cells + '</div>' +
+      '<div class="sb-foot">pinned — press Esc or click unpin to close</div>';
+  }
+
+  // sbCell is one side of a side-by-side row: its line number, when that side
+  // has the line, and its text. A side without the line stays blank, with
+  // nothing between it and the text it was measured against.
+  function sbCell(side, lineNo, cls, body) {
+    const cellCls = 'sb-cell sb-' + side + cls;
+    if (!lineNo) return '<div class="' + cellCls + ' sb-blank"></div>';
+    return '<div class="' + cellCls + '">' +
+      '<span class="sb-no">' + lineNo + '</span>' +
+      '<span class="sb-text">' + body + '</span>' +
+      '</div>';
+  }
+
+  // annotateTargetLabel names the revision the reviewed side belongs to: the
+  // commit being stepped through, or the working tree.
+  function annotateTargetLabel() {
+    if (!state.rev) return 'working tree';
+    const c = state.commits.find(c => c.hash === state.rev);
+    return c ? c.short : state.rev.slice(0, 8);
+  }
+
+  // hunkUnified is the older one-column rendering, used when the side-by-side
+  // view is switched off. The hunk still arrives as rows, so the raw diff line
+  // an older server would have sent is rebuilt from them.
+  function hunkUnified(hunk) {
+    const lines = [];
+    for (const row of hunk.rows || []) {
+      if (row.oldNo && row.newNo && row.old === row.new) {
+        lines.push(' ' + row.old);
+        continue;
+      }
+      if (row.oldNo) lines.push('-' + row.old);
+      if (row.newNo) lines.push('+' + row.new);
+    }
+    return '<pre>' + lines.map(line => {
+      const cls = line.startsWith('+') ? ' class="diff-add"' : line.startsWith('-') ? ' class="diff-del"' : '';
+      return '<span' + cls + '>' + escapeHtml(line) + '</span>';
+    }).join('\n') + '</pre>';
+  }
 
   function showDiffTooltip(event, hunk) {
     // Moving along the gutter of one hunk keeps the tooltip that is up, rather
     // than building the same one again for every cell passed over.
     if (diffTooltip && diffTooltipHunk === hunk) return;
 
+    // A pinned tooltip stays docked; a new hunk read into it replaces its
+    // contents rather than moving it out from where the reader put it. The
+    // header is rebuilt with it, so the button has to be told it is still the
+    // pinned one.
+    if (diffTooltipPinned && diffTooltip) {
+      diffTooltipHunk = hunk;
+      diffTooltip.innerHTML = diffTooltipContent(hunk);
+      updatePinButton();
+      return;
+    }
+
     hideDiffTooltip();
     diffTooltipHunk = hunk;
     diffTooltip = document.createElement('div');
-    diffTooltip.className = 'diff-tooltip';
-    const lines = hunk.diff.trimEnd().split('\n');
-    const html = lines.map(line => {
-      const cls = line.startsWith('+') ? ' class="diff-add"' : line.startsWith('-') ? ' class="diff-del"' : '';
-      return '<span' + cls + '>' + escapeHtml(line) + '</span>';
-    }).join('\n');
-    diffTooltip.innerHTML = '<pre>' + html + '</pre>';
+    diffTooltip.className = 'diff-tooltip' + (state.sideBySide ? ' side-by-side' : '');
+    diffTooltip.innerHTML = diffTooltipContent(hunk);
 
     // Place the tooltip at the cursor straight away so the pointer is already
     // inside it (near the top-left corner). This lets a tall, scrollable
@@ -1097,6 +1194,17 @@
       diffTooltipBounds = diffTooltip.getBoundingClientRect();
     });
 
+    diffTooltip.addEventListener('click', (e) => {
+      if (!e.target.closest('.sb-pin')) {
+        // A click anywhere else on a pinned pane is left alone: it is there to
+        // be read and copied from, and closing on any click would make
+        // selecting text impossible. Esc and the button put it away.
+        return;
+      }
+      if (diffTooltipPinned) unpinDiffTooltip();
+      else pinDiffTooltip();
+    });
+
     // Hide once the pointer leaves the tooltip. A document-level mousemove
     // guard is used instead of the gutter's mouseleave: the tooltip now sits
     // under the cursor (covering the gutter), so relying on the gutter would
@@ -1104,6 +1212,7 @@
     // the pointer is still at the corner where the tooltip was placed, so there
     // is nothing to leave yet.
     diffTooltipMoveHandler = (e) => {
+      if (diffTooltipPinned) return;
       const b = diffTooltipBounds;
       if (!b) return;
       if (e.clientX < b.left || e.clientX > b.right ||
@@ -1112,6 +1221,42 @@
       }
     };
     document.addEventListener('mousemove', diffTooltipMoveHandler);
+  }
+
+  // pinDiffTooltip keeps the hunk on screen after the pointer leaves, as a
+  // pane down the side of the code view where a tall hunk can be read and
+  // scrolled at leisure.
+  function pinDiffTooltip() {
+    if (!diffTooltip || diffTooltipPinned) return;
+    diffTooltipPinned = true;
+    diffTooltip.classList.add('pinned');
+    updatePinButton();
+
+    // Docked to the right of the code view, below its header, so the hunk
+    // stays beside the lines it belongs to. The stylesheet's minimum width is
+    // honoured, so the docked pane is never narrower than a hovering one.
+    const rect = codeContent.getBoundingClientRect();
+    const margin = 12;
+    const minWidth = parseFloat(getComputedStyle(diffTooltip).minWidth) || 0;
+    const width = Math.min(Math.max(rect.width * 0.5, minWidth), 760);
+    diffTooltip.style.left = Math.max(margin, rect.right - width - margin) + 'px';
+    diffTooltip.style.top = (rect.top + margin) + 'px';
+    diffTooltip.style.width = width + 'px';
+    diffTooltip.style.maxHeight = Math.max(120, rect.height - 2 * margin) + 'px';
+    diffTooltipBounds = null; // the move guard no longer applies
+  }
+
+  // unpinDiffTooltip puts the pane away. There is no pointer over it to keep a
+  // hovering hunk alive, so it goes with the pinned state.
+  function unpinDiffTooltip() {
+    hideDiffTooltip();
+  }
+
+  function updatePinButton() {
+    const pin = diffTooltip && diffTooltip.querySelector('.sb-pin');
+    if (!pin) return;
+    pin.textContent = diffTooltipPinned ? 'unpin' : 'pin';
+    pin.classList.toggle('active', diffTooltipPinned);
   }
 
   function hideDiffTooltip() {
@@ -1129,7 +1274,14 @@
     }
     diffTooltipHunk = null;
     diffTooltipBounds = null;
+    diffTooltipPinned = false;
   }
+
+  // Escape puts an unpinned tooltip away as well, so the keyboard alone is
+  // enough to get one off the screen.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && diffTooltip) hideDiffTooltip();
+  });
 
   // Start a new review, moving the current one into the review history when
   // it is set up and deleting it otherwise.
