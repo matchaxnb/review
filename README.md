@@ -19,6 +19,7 @@ The tool was vibecoded as a simple way to review agentic coded files. The markdo
 - **Review history** — optionally keep retired reviews in `.review-history/` instead of deleting them, each named after its last change and kept out of git
 - **Graceful shutdown** — the browser tab closes automatically when the server stops
 - **Markdown storage** — all annotations are saved to `REVIEW.md` with surrounding code context and a header naming the commit the review was taken from, making them easy to read and share without the tool
+- **Agent instruction companion skill** — the `REVIEW.md` format ships as a skill in `skills/review-md/`, installed with `make install-skill`, so an agent can read how to act on a review without being told
 - **Single binary** — the web frontend is embedded in the Go binary; no external files or dependencies needed at runtime
 
 ## Building
@@ -131,6 +132,22 @@ The tool exposes a JSON API for the frontend:
 | `GET` | `/api/config` | Review settings, currently the base revision and whether review history is enabled |
 | `DELETE` | `/api/review` | Start a new review; delete REVIEW.md, or move it to the review history |
 | `GET` | `/ws` | WebSocket for live updates |
+
+### Instructions for Agents
+
+The `REVIEW.md` format — its grammar, what `(outdated)` means, how to act on
+comments — ships as a companion skill in `skills/review-md/`. `make install-skill`
+copies it where agents read skills:
+
+```sh
+make install-skill              # → ~/.agents/skills/review-md
+make install-skill SKILLS_DIR=… # elsewhere
+```
+
+An agent that reads that location picks it up with no further setup; the file is
+also readable directly at `skills/review-md/SKILL.md`. Nothing is written into the
+reviewed project: it belongs to its own repository, and an `AGENTS.md` or
+`CLAUDE.md` left there would outlive the review.
 
 ### Commenting on a Range of Lines
 
