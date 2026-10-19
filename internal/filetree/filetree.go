@@ -62,20 +62,26 @@ func Walk(root string) ([]*Entry, error) {
 	return walkDir(root, "")
 }
 
-// gitLsFiles returns all tracked and untracked-but-not-ignored files using git.
-// The -z flag emits NUL-separated, unquoted paths, so filenames containing
-// non-ASCII (e.g. umlauts) or other special characters are returned verbatim
-// instead of git's default C-style quoted form.
+// alwaysIncludedDirs are directories at the root whose files are shown even
+// when a gitignore rule excludes them. They hold material such as plans that
+// the user reviews but often keeps out of version control.
+var alwaysIncludedDirs = []string{".claude"}
+
+// gitLsFiles returns all tracked and untracked-but-not-ignored files using git,
+// plus the ignored files in alwaysIncludedDirs.
 func gitLsFiles(root string) ([]string, error) {
-	cmd := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-	cmd.Dir = root
-	out, err := cmd.Output()
+	paths, err := runGitLsFiles(root, "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return nil, err
 	}
+	ignored, err := runGitLsFiles(root, append([]string{"--others", "--ignored", "--exclude-standard", "--"}, alwaysIncludedDirs...)...)
+	if err != nil {
+		return nil, err
+	}
+	paths = append(paths, ignored...)
 
 	var files []string
-	for _, path := range strings.Split(string(out), "\x00") {
+	for _, path := range paths {
 		if path == "" || path == reviewFile {
 			continue
 		}
@@ -90,6 +96,20 @@ func gitLsFiles(root string) ([]string, error) {
 		files = append(files, path)
 	}
 	return files, nil
+}
+
+// runGitLsFiles runs git ls-files in root with the given arguments and returns
+// the listed paths. The -z flag emits NUL-separated, unquoted paths, so
+// filenames containing non-ASCII (e.g. umlauts) or other special characters are
+// returned verbatim instead of git's default C-style quoted form.
+func runGitLsFiles(root string, args ...string) ([]string, error) {
+	cmd := exec.Command("git", append([]string{"ls-files", "-z"}, args...)...)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return strings.Split(string(out), "\x00"), nil
 }
 
 // inIgnoredDir reports whether a file sits below one of the directories that are

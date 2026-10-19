@@ -166,10 +166,11 @@ func TestWalkGitRepoHiddenEntries(t *testing.T) {
 
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{
-		".gitignore":  "ignored.txt\n",
-		".env":        "SECRET=1",
-		"ignored.txt": "nope",
-		"main.go":     "package main",
+		".gitignore":            "ignored.txt\n.claude/\n",
+		".env":                  "SECRET=1",
+		"ignored.txt":           "nope",
+		"main.go":               "package main",
+		".claude/plans/plan.md": "# Plan",
 	})
 	cmd := exec.Command("git", "init")
 	cmd.Dir = root
@@ -183,7 +184,7 @@ func TestWalkGitRepoHiddenEntries(t *testing.T) {
 	}
 
 	names := entryPaths(tree)
-	for _, want := range []string{".gitignore", ".env", "main.go"} {
+	for _, want := range []string{".gitignore", ".env", "main.go", ".claude/plans/plan.md"} {
 		if !names[want] {
 			t.Errorf("expected %q in tree, got %v", want, names)
 		}
