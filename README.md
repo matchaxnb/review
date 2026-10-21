@@ -39,6 +39,14 @@ or
 make
 ```
 
+Prebuilt binaries are published on the
+[releases page](https://github.com/matchaxnb/review/releases): Linux and macOS on
+amd64 and arm64, and Windows on amd64 and arm64. They are built with
+`CGO_ENABLED=0`, so each is a static pure-Go binary that runs on any machine of
+that platform, whatever C library it carries — a plain `go build` links against
+the local libc instead, which is why a locally built binary is not always
+portable between distributions.
+
 ## Usage
 
 ```sh
