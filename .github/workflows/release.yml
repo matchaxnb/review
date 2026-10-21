@@ -49,11 +49,21 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          # No cgo: the binaries are built against the pure-Go standard library
+          # only, so they are statically linked and run on any machine of that
+          # platform and architecture, whatever C library it carries.
+          CGO_ENABLED: "0"
         run: |
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
           output="review-${GOOS}-${GOARCH}${ext}"
           go build -trimpath -ldflags="-s -w" -o "$output" .
+          # Prove the build is the portable one: a Linux binary that pulls in
+          # libc would work here and fail on a musl system.
+          if [ "$GOOS" = "linux" ] && file "$output" | grep -q "dynamically linked"; then
+            echo "::error::$output is dynamically linked; CGO_ENABLED=0 did not take"
+            exit 1
+          fi
           echo "ARTIFACT=$output" >> "$GITHUB_ENV"
 
       - name: Upload artifact

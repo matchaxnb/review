@@ -244,6 +244,20 @@ written out of the file when the tool next opens or closes.
 
 [comment-range]: https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-range
 
+## Lineage
+
+This tool started as [splitbrain/review](https://github.com/splitbrain/review) by
+Andreas Gohr, which is where its shape comes from: a single self-contained binary,
+a file tree beside the code, and comments kept in a `REVIEW.md` that reads on its
+own. That project is the origin of the idea and of the first working version.
+
+This repository is an active fork of it, and the work here has since moved on:
+reviewing committed history commit by commit, comments that thread and can be
+replied to, suggested changes, review history, drift detection, and the reload
+and deletion semantics described above. Upstream is still merged in from time to
+time, so its fixes keep arriving — the file tree's handling of ignored
+directories, for one.
+
 ## License
 
 MIT
