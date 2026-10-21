@@ -65,6 +65,18 @@ func main() {
 	}
 	st.SetBase(baseCommit.Summary(rootDir))
 
+	// Comments deleted while the tool was not running are only tombstones in
+	// the file: opening the review writes them, and everything answering them,
+	// out for good. Closing the tool does the same for the ones deleted here.
+	if err := st.Purge(); err != nil {
+		log.Printf("Warning: could not drop deleted comments: %v", err)
+	}
+	defer func() {
+		if err := st.Purge(); err != nil {
+			log.Printf("Warning: could not drop deleted comments: %v", err)
+		}
+	}()
+
 	// Run initial drift check on all annotated files
 	drifted, err := st.CheckAllDrift()
 	if err != nil {
@@ -113,9 +125,38 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
+	// SIGHUP reads the review again: the file may have been edited, or replaced
+	// by an agent working the comments, and the tool has to be told to notice.
+	// It is the benign signal on every system that has it, which is why it is
+	// the one used rather than a signal with its own meaning here.
+	reopenCh := make(chan os.Signal, 1)
+	signal.Notify(reopenCh, syscall.SIGHUP)
+	go func() {
+		for range reopenCh {
+			drifted, changed, err := st.Reopen()
+			if err != nil {
+				log.Printf("Reload failed, keeping the review in hand: %v", err)
+				continue
+			}
+			for f := range drifted {
+				log.Printf("Drift detected in %s — annotations adjusted", f)
+			}
+			log.Printf("Review reloaded from %s", st.MdPath())
+			if !changed && len(drifted) == 0 {
+				continue
+			}
+			server.BroadcastReview(hub, st)
+		}
+	}()
+
 	go func() {
 		<-sigCh
 		log.Println("Shutting down...")
+		// Nothing is read after this, so the comments deleted during the
+		// session are written out of the review before the tool goes away.
+		if err := st.Purge(); err != nil {
+			log.Printf("Warning: could not drop deleted comments: %v", err)
+		}
 		hub.Shutdown()
 		time.Sleep(200 * time.Millisecond) // give WS time to deliver
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

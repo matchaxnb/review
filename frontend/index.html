@@ -53,12 +53,19 @@
       <div id="comment-editor" class="comment-editor" style="display:none">
         <div class="editor-header">
           <span id="editor-line-label">Line ?</span>
-          <button class="secondary" onclick="app.closeEditor()" style="padding:0.2rem 0.5rem;font-size:0.75rem">Cancel</button>
+          <button class="secondary" id="editor-cancel-reply" onclick="app.cancelReply()" style="display:none;padding:0.2rem 0.5rem;font-size:0.75rem">Cancel reply</button>
+          <button class="secondary" onclick="app.closeEditor()" style="padding:0.2rem 0.5rem;font-size:0.75rem">Close</button>
         </div>
         <textarea id="editor-textarea" placeholder="Write your review comment..." rows="3"></textarea>
+        <div class="editor-suggestion" id="editor-suggestion" style="display:none">
+          <label for="editor-suggestion-textarea">Suggested change
+            <button class="link-btn" id="editor-suggestion-toggle" onclick="app.toggleSuggestion()">fill from the lines above</button>
+          </label>
+          <textarea id="editor-suggestion-textarea" placeholder="Replacement lines for the range, without line numbers" rows="3" spellcheck="false"></textarea>
+        </div>
         <div class="editor-actions">
-          <button onclick="app.saveComment()">Save</button>
-          <button class="contrast" onclick="app.deleteComment()">Delete</button>
+          <button id="editor-save" onclick="app.saveComment()">Comment</button>
+          <button class="secondary" id="editor-suggestion-btn" onclick="app.showSuggestion()">Suggest change</button>
         </div>
       </div>
     </aside>

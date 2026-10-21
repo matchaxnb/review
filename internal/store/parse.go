@@ -13,10 +13,31 @@ import (
 // tells it apart from a code sample written in the comment above it.
 const contextMarker = "context"
 
+// suggestionMarker is the info string of the fence around a suggested
+// replacement. It is a word of its own rather than a marker beside the file's
+// language, so a suggestion reads like the same block does in Gerrit and in
+// GitHub's suggestion comments.
+const suggestionMarker = "suggestion"
+
 var (
+	// Every form of line heading carries the id of the comment it introduces
+	// after the @. A comment of one line reads "#### Line 42 @1729532520", a
+	// range "#### Lines 10-20 @1729532520", and a deleted one — which only
+	// survives in a file left behind by a tool that was killed — adds the
+	// (outdated) and (deleted) marks to either. One pattern covers the four,
+	// so the two heading forms never drift apart.
+	lineHeadingRe = regexp.MustCompile(`^#### Lines? (\d+)(?:-(\d+))?(?: @(\d+))?(.*)$`)
+
+	// Existing marks on a heading, read back off the trailing text.
+	outdatedMarkRe = regexp.MustCompile(`\(outdated\)`)
+	deletedMarkRe  = regexp.MustCompile(`\(deleted\)`)
+
+	// replyLineRe matches the line naming the comment an answer replies to. It
+	// is written like the review's own header fields, and is the one such line
+	// a comment may begin with without being escaped.
+	replyLineRe = regexp.MustCompile(`^_In reply to: (\d+)_$`)
+
 	fileHeaderRe  = regexp.MustCompile("^## `(.+)`$")
-	singleLineRe  = regexp.MustCompile(`^#### Line (\d+)(.*)$`)
-	rangeLineRe   = regexp.MustCompile(`^#### Lines (\d+)-(\d+)(.*)$`)
 	contextLineRe = regexp.MustCompile(`^(\d+):(?: (.*))?$`)
 	startedRe     = regexp.MustCompile(`^_Started: (.+)_$`)
 	baseRe        = regexp.MustCompile(`^_Base: (.+)_$`)
@@ -33,14 +54,14 @@ var lineHeaderRe = regexp.MustCompile(`^#### Lines? `)
 // taken from and when it was begun and last written. All fields are empty for
 // a file that records none of them.
 type reviewMeta struct {
-	data     map[string]map[int]*Annotation
+	data     map[string]map[int]*Thread
 	started  string
 	base     string
 	created  string
 	modified string
 }
 
-// parse reads a REVIEW.md file and returns the annotations together with the
+// parse reads a REVIEW.md file and returns the threads together with the
 // review's own record, which is empty for a file that carries none.
 //
 // Comments are kept as the reviewer wrote them, so the document's own
@@ -51,12 +72,12 @@ func parse(path string) (reviewMeta, error) {
 	lines, err := readLines(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return reviewMeta{data: make(map[string]map[int]*Annotation)}, nil
+			return reviewMeta{data: make(map[string]map[int]*Thread)}, nil
 		}
 		return reviewMeta{}, err
 	}
 
-	data := make(map[string]map[int]*Annotation)
+	data := make(map[string]map[int]*Thread)
 
 	// A document that marks its context blocks is read strictly, so a code
 	// sample closing a comment is never taken for one. Files written before
@@ -68,26 +89,61 @@ func parse(path string) (reviewMeta, error) {
 		currentFile string
 		currentLine int
 		startLine   int
+		hasHeading  bool
 		outdated    bool
+		deleted     bool
+		replyTo     int64
 		body        []string
 		collecting  bool
 		fence       string
+
+		// Comment ids walk upwards as the file is read, so a file whose
+		// headings name no id — every review written before comments were
+		// numbered — still comes back with them ordered, and the store has an
+		// id to hand out next. A heading that names one keeps it: renumbering
+		// a comment on every read would rewrite the whole file each time.
+		lastID int64
+		thisID int64
 	)
 
-	// save turns the lines collected since the last heading into an annotation.
+	// save turns the lines collected since the last heading into a comment and
+	// appends it to the thread on the lines the heading named. A heading with
+	// no comment under it leaves the review as it was, which is what an
+	// (outdated) mark standing alone in an older file comes down to.
 	save := func() {
 		if !collecting {
 			return
 		}
-		comment, context, contextFrom := splitBody(body, marked)
-		if comment != "" && currentFile != "" {
-			data[currentFile][currentLine] = &Annotation{
-				Comment:     comment,
-				StartLine:   startLine,
-				Context:     context,
-				ContextFrom: contextFrom,
-				Outdated:    outdated,
+		comment, context, contextFrom, suggestion := splitBody(body, marked)
+		if (comment != "" || suggestion != "") && currentFile != "" && hasHeading {
+			t := data[currentFile][currentLine]
+			if t == nil {
+				t = &Thread{StartLine: startLine}
+				data[currentFile][currentLine] = t
 			}
+			if contextFrom > 0 {
+				t.Context, t.ContextFrom = context, contextFrom
+			}
+			if outdated {
+				t.Outdated = true
+			}
+			// A heading that named an id keeps it; one that did not — every
+			// comment in a review written before they were numbered — takes
+			// the next in order, so the file comes back numbered.
+			id := thisID
+			if id == 0 {
+				id = lastID + 1
+			}
+			if id > lastID {
+				lastID = id
+			}
+			t.Comments = append(t.Comments, &Comment{
+				ID:         id,
+				ReplyTo:    replyTo,
+				Comment:    comment,
+				Suggestion: suggestion,
+				Deleted:    deleted,
+			})
 		}
 		body = nil
 		collecting = false
@@ -112,19 +168,22 @@ func parse(path string) (reviewMeta, error) {
 			continue
 		}
 
-		if m := rangeLineRe.FindStringSubmatch(line); m != nil && currentFile != "" {
+		if m := lineHeadingRe.FindStringSubmatch(line); m != nil && currentFile != "" {
 			save()
-			currentLine, _ = strconv.Atoi(m[2])
 			startLine, _ = strconv.Atoi(m[1])
-			outdated = strings.Contains(m[3], "outdated")
-			collecting = true
-			continue
-		}
-		if m := singleLineRe.FindStringSubmatch(line); m != nil && currentFile != "" {
-			save()
-			currentLine, _ = strconv.Atoi(m[1])
-			startLine = currentLine
-			outdated = strings.Contains(m[2], "outdated")
+			currentLine = startLine
+			if m[2] != "" {
+				currentLine, _ = strconv.Atoi(m[2])
+			}
+			if m[3] != "" {
+				thisID, _ = strconv.ParseInt(m[3], 10, 64)
+			} else {
+				thisID = 0
+			}
+			outdated = outdatedMarkRe.MatchString(m[4])
+			deleted = deletedMarkRe.MatchString(m[4])
+			replyTo = 0
+			hasHeading = true
 			collecting = true
 			continue
 		}
@@ -132,18 +191,31 @@ func parse(path string) (reviewMeta, error) {
 			save()
 			currentFile = m[1]
 			if data[currentFile] == nil {
-				data[currentFile] = make(map[int]*Annotation)
+				data[currentFile] = make(map[int]*Thread)
 			}
+			hasHeading = false
 			continue
 		}
 		if strings.TrimSpace(line) == "---" && opensFileSection(lines[i+1:]) {
 			save()
+			hasHeading = false
 			continue
 		}
 
 		if !collecting {
 			readMeta(&meta, strings.TrimSpace(line))
 			continue
+		}
+		if !hasText(body) {
+			// Only the first line of a comment can be a reply marker: the id it
+			// names is what puts the comment in the thread it belongs to, and a
+			// reply has no context block or suggestion of its own. Blank lines
+			// between the heading and the marker are skipped, since the marker
+			// is written as its own paragraph.
+			if m := replyLineRe.FindStringSubmatch(line); m != nil {
+				replyTo, _ = strconv.ParseInt(m[1], 10, 64)
+				continue
+			}
 		}
 		body = append(body, unescapeStructure(line))
 	}
@@ -175,26 +247,70 @@ func readMeta(meta *reviewMeta, line string) {
 	}
 }
 
-// splitBody separates an annotation's comment from the context block closing
-// it. With marked set, only a block whose fence carries the context marker
-// counts as one; otherwise a closing block of numbered source lines does.
-func splitBody(body []string, marked bool) (string, []string, int) {
+// splitBody separates a comment's prose from the blocks that follow it: the
+// suggested replacement, when the comment carries one, and the source context
+// block that closes it. Context comes back as the lines themselves together
+// with the line number the block starts at, and 0 when there is none.
+//
+// With marked set, only a fence carrying the context marker counts as a
+// context block; otherwise a closing block of numbered source lines does.
+func splitBody(body []string, marked bool) (comment string, context []string, from int, suggestion string) {
 	end := len(body)
 	for end > 0 && strings.TrimSpace(body[end-1]) == "" {
 		end--
 	}
 
 	open, close, ok := lastFencedBlock(body[:end])
-	if !ok || close != end-1 {
-		return joinComment(body[:end]), nil, 0
+	if ok && close == end-1 && (!marked || isContextFence(body[open])) {
+		if ctx, at, ok := parseContext(body[open+1 : close]); ok {
+			context, from = ctx, at
+			end = open
+		}
 	}
-	if marked && !isContextFence(body[open]) {
-		return joinComment(body[:end]), nil, 0
+
+	// What is left may end in a suggested replacement, which the comment's own
+	// prose precedes the way it precedes the context block.
+	suggestion, rest := splitSuggestion(body[:end])
+	return joinComment(rest), context, from, suggestion
+}
+
+// splitSuggestion takes a trailing ```suggestion block off a comment and
+// returns its lines together with what precedes it. A suggestion is written
+// without line numbers: it is the code that should stand there, not a quote of
+// code that does.
+func splitSuggestion(body []string) (string, []string) {
+	end := len(body)
+	for end > 0 && strings.TrimSpace(body[end-1]) == "" {
+		end--
 	}
-	if context, from, ok := parseContext(body[open+1 : close]); ok {
-		return joinComment(body[:open]), context, from
+	open, close, ok := lastFencedBlock(body[:end])
+	if !ok || close != end-1 || !isSuggestionFence(body[open]) {
+		return "", body
 	}
-	return joinComment(body[:end]), nil, 0
+	return strings.TrimSuffix(strings.Join(body[open+1:close], "\n"), "\n"), body[:open]
+}
+
+// isSuggestionFence reports whether a fence line opens a suggested change.
+func isSuggestionFence(line string) bool {
+	return strings.EqualFold(fenceInfo(line), suggestionMarker)
+}
+
+// isContextFence reports whether a fence line opens a context block.
+func isContextFence(line string) bool {
+	return slices.Contains(strings.Fields(fenceInfo(line)), contextMarker)
+}
+
+// fenceInfo returns the info string of a code fence line, or an empty string
+// when the line opens no fence.
+func fenceInfo(line string) string {
+	trimmed, indent := trimIndent(line)
+	if indent > maxFenceIndent {
+		return ""
+	}
+	if fenceRe.FindString(trimmed) == "" {
+		return ""
+	}
+	return strings.TrimLeft(trimmed, "`~")
 }
 
 // usesContextMarker reports whether the document marks its context blocks.
@@ -207,11 +323,16 @@ func usesContextMarker(lines []string) bool {
 	return false
 }
 
-// isContextFence reports whether a fence line opens a context block.
-func isContextFence(line string) bool {
-	trimmed, _ := trimIndent(line)
-	info := strings.TrimLeft(trimmed, "`~")
-	return slices.Contains(strings.Fields(info), contextMarker)
+// hasText reports whether any of the lines carries something other than
+// whitespace, which is what tells a comment that has started from one that is
+// still only blank lines.
+func hasText(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // joinComment assembles the comment body, without the blank lines that set it

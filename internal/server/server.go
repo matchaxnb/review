@@ -33,6 +33,7 @@ func New(st *store.Store, rootDir string, base gitstatus.Base, frontendFS fs.FS,
 		rootDir:     rootDir,
 		base:        base,
 		highlighter: highlight.NewCache(highlightCacheSize),
+		blame:       gitstatus.NewBlameCache(),
 		sideBySide:  sideBySide,
 	}
 

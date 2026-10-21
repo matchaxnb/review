@@ -40,6 +40,24 @@ func (b Base) rev() string {
 	return b.Commit
 }
 
+// Short names the commit the diffs are taken from, abbreviated the way git
+// abbreviates it. The empty string means the directory is not a git repository.
+func (b Base) Short(dir string) string {
+	commit := b.Commit
+	if commit == "" {
+		head, err := gitLine(dir, "rev-parse", "HEAD")
+		if err != nil {
+			return ""
+		}
+		commit = head
+	}
+	short, err := gitLine(dir, "rev-parse", "--short", commit)
+	if err != nil {
+		return ""
+	}
+	return short
+}
+
 // Summary describes the point a review is taken from, for the record written
 // in REVIEW.md: the revision the user gave, the commit it resolved to, the
 // first line of that commit's message and whether the tree has changes beyond

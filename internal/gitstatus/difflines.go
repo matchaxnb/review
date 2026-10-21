@@ -45,9 +45,36 @@ type DiffDeletion struct {
 // DiffHunk represents a single diff hunk with its affected line range and the
 // lines it covers, laid out for a side-by-side view.
 type DiffHunk struct {
-	StartLine int       `json:"startLine"` // first new-file line in hunk
-	EndLine   int       `json:"endLine"`   // last new-file line in hunk
-	Rows      []DiffRow `json:"rows"`      // the hunk's lines, one row per line of either version
+	StartLine int        `json:"startLine"`        // first new-file line in hunk
+	EndLine   int        `json:"endLine"`          // last new-file line in hunk
+	Rows      []DiffRow  `json:"rows"`             // the hunk's lines, one row per line of either version
+	Commit    *BlameLine `json:"commit,omitempty"` // commit that put this hunk there, when blame found one
+}
+
+// AttributeHunks records, on each hunk, the commit that put it there: the most
+// recent commit behind any line the hunk added or replaced, which is the change
+// the reader is looking at the diff of.
+//
+// Only lines the hunk added or replaced are asked about, so the answer is the
+// change itself rather than the history of the lines around it. A hunk with
+// nothing to attribute — a file git does not track, or a change not yet
+// committed — is left as it is.
+func AttributeHunks(hunks []DiffHunk, blame *Blame) {
+	for i := range hunks {
+		var changed []int
+		for _, row := range hunks[i].Rows {
+			// A line the hunk replaced shares one row with the line it stood
+			// for; a line only the new side has is an addition. Either way the
+			// line under review is the new file's, which is what was blamed.
+			if row.NewNo != 0 && (row.OldNo == 0 || row.Old != row.New) {
+				changed = append(changed, row.NewNo)
+			}
+		}
+		if len(changed) == 0 {
+			continue
+		}
+		hunks[i].Commit = blame.Newest(changed)
+	}
 }
 
 // DiffRow is one line of a hunk as a side-by-side view reads it: a line of the

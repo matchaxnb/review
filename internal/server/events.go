@@ -40,6 +40,16 @@ func BridgeWatcher(hub *Hub, st *store.Store, w *watcher.Watcher) {
 	}()
 }
 
+// BroadcastReview re-sends the whole review to every client, for a change that
+// came from outside the tool and cannot be described as a single file's
+// annotations — the review being read again from disk, say.
+func BroadcastReview(hub *Hub, st *store.Store) {
+	hub.Broadcast(serverEvent{
+		Type:           "review-reloaded",
+		AllAnnotations: allAnnotations(st.All()),
+	})
+}
+
 // Shutdown tells clients that the server is going away, so they can close the
 // tab it was opened in.
 func (h *Hub) Shutdown() {

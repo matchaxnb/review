@@ -20,11 +20,13 @@ func TestCheckDrift_NoChange(t *testing.T) {
 	}
 
 	// Manually set annotation with context
-	st.data["test.go"] = map[int]*Annotation{
+	st.data["test.go"] = map[int]*Thread{
 		3: {
-			Comment:     "test comment",
 			Context:     []string{"line2", "line3", "line4"},
 			ContextFrom: 2,
+			Comments: []*Comment{
+				{Comment: "test comment"},
+			},
 		},
 	}
 
@@ -46,11 +48,13 @@ func TestCheckDrift_Relocated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st.data["test.go"] = map[int]*Annotation{
+	st.data["test.go"] = map[int]*Thread{
 		3: {
-			Comment:     "test comment",
 			Context:     []string{"line2", "line3", "line4"},
 			ContextFrom: 2,
+			Comments: []*Comment{
+				{Comment: "test comment"},
+			},
 		},
 	}
 
@@ -80,11 +84,13 @@ func TestCheckDrift_Outdated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st.data["test.go"] = map[int]*Annotation{
+	st.data["test.go"] = map[int]*Thread{
 		3: {
-			Comment:     "test comment",
 			Context:     []string{"line2", "line3", "line4"},
 			ContextFrom: 2,
+			Comments: []*Comment{
+				{Comment: "test comment"},
+			},
 		},
 	}
 
@@ -110,11 +116,13 @@ func TestCheckDrift_FileDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st.data["nonexistent.go"] = map[int]*Annotation{
+	st.data["nonexistent.go"] = map[int]*Thread{
 		3: {
-			Comment:     "test comment",
 			Context:     []string{"line2", "line3", "line4"},
 			ContextFrom: 2,
+			Comments: []*Comment{
+				{Comment: "test comment"},
+			},
 		},
 	}
 
@@ -141,8 +149,8 @@ func TestCheckDrift_NoContext(t *testing.T) {
 	}
 
 	// An annotation without context adopts the current source as reference
-	st.data["test.go"] = map[int]*Annotation{
-		1: {Comment: "no context"},
+	st.data["test.go"] = map[int]*Thread{
+		1: {Comments: []*Comment{{Comment: "no context"}}},
 	}
 
 	if !checkDrift(t, st, "test.go") {
@@ -241,7 +249,7 @@ func TestCheckDrift_RelocatesToNearestCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Comment on the second copy's body
-	if err := st.Set("test.go", 5, 5, "the second one"); err != nil {
+	if _, err := st.AppendComment("test.go", 5, 5, 0, "the second one", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -279,15 +287,16 @@ func TestOnChange_NoDeadlock(t *testing.T) {
 
 	// These will deadlock (and the test will time out) if notifyChange
 	// is called while the write lock is still held.
-	if err := st.Set("test.go", 1, 1, "comment"); err != nil {
-		t.Fatalf("Set failed: %v", err)
+	id, err := st.AppendComment("test.go", 1, 1, 0, "comment", "")
+	if err != nil {
+		t.Fatalf("AppendComment failed: %v", err)
 	}
-	if err := st.Delete("test.go", 1); err != nil {
-		t.Fatalf("Delete failed: %v", err)
+	if err := st.DeleteComment("test.go", id); err != nil {
+		t.Fatalf("DeleteComment failed: %v", err)
 	}
 }
 
-func keys(m map[int]*Annotation) []int {
+func keys(m map[int]*Thread) []int {
 	ks := make([]int, 0, len(m))
 	for k := range m {
 		ks = append(ks, k)
@@ -308,7 +317,7 @@ func TestCheckDrift_OutdatedSurvivesReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("test.go", 4, 4, "look at this"); err != nil {
+	if _, err := st.AppendComment("test.go", 4, 4, 0, "look at this", ""); err != nil {
 		t.Fatal(err)
 	}
 

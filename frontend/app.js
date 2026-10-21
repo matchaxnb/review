@@ -7,17 +7,20 @@
     openDirs: {},
     currentFile: null,
     language: '',
-    annotations: {},      // end line → {comment, startLine, endLine, outdated} for current file
-    allAnnotations: {},   // path → {end line → {comment, startLine, endLine, outdated}} for all files
+    annotations: {},      // end line → {startLine, endLine, outdated, comments:[{id, replyTo, comment, suggestion}]} for the current file
+    allAnnotations: {},   // path → the same, for every file
     diffLines: {},        // line → "added"|"modified" for current file
     diffHunks: [],        // [{startLine, endLine, diff}] for current file
     diffDeletions: [],    // [{afterLine, hunkIndex}] for current file
     totalLines: 0,        // number of lines in the current file
     scrollPositions: {},  // path → scrollTop of the code view when the file was left
-    editingLine: null,    // end line of the comment being edited (the annotation's key)
+    editingLine: null,    // end line of the thread being commented on (the thread's key)
+    replyTo: null,        // id of the comment being answered, null for a new comment
     selectionStart: null, // first line of the range being selected/edited
     selectionEnd: null,   // last line of the range being selected/edited
     anchorLine: null,     // line a shift-click extends the selection from
+    activeThread: null,   // end line of the thread shown in the panel, for its highlight
+    showSuggestion: false,// whether the suggested-change field is open in the editor
     gitStatuses: {},
     wsConnected: false,
     // History review: commits from the base to HEAD (newest first), the
@@ -28,6 +31,7 @@
     revCache: {},
     historyEnabled: false, // retired reviews are kept rather than deleted
     historyDest: '',       // where the current review would be moved on the next one
+    baseShort: '',        // the base revision abbreviated, as git prints it
     sideBySide: true,      // show diff hunks as two columns (the server can turn this off)
   };
 
@@ -39,7 +43,8 @@
   let treePane, treeContainer, codeContent, codeHeader, commentList, commentEditor,
       editorTextarea, editorLineLabel, statusCommentCount, statusMdPath,
       statusBase, wsIndicator, toastContainer,
-      commitBar, commitSelect, commitPrev, commitNext, commitSubject;
+      commitBar, commitSelect, commitPrev, commitNext, commitSubject,
+      suggestionRow, suggestionTextarea, suggestionBtn, cancelReplyBtn, saveBtn;
 
   // Initialize
   document.addEventListener('DOMContentLoaded', () => {
@@ -51,6 +56,11 @@
     commentEditor = document.getElementById('comment-editor');
     editorTextarea = document.getElementById('editor-textarea');
     editorLineLabel = document.getElementById('editor-line-label');
+    suggestionRow = document.getElementById('editor-suggestion');
+    suggestionTextarea = document.getElementById('editor-suggestion-textarea');
+    suggestionBtn = document.getElementById('editor-suggestion-btn');
+    cancelReplyBtn = document.getElementById('editor-cancel-reply');
+    saveBtn = document.getElementById('editor-save');
     statusCommentCount = document.getElementById('status-comment-count');
     statusMdPath = document.getElementById('status-md-path');
     statusBase = document.getElementById('status-base');
@@ -270,16 +280,23 @@
   // (plus uncommitted work), so a change made and reverted is not shown.
   function aggregateLabel() {
     const n = state.commits.length;
-    if (!n) return 'all changes since ' + (state.baseRev || 'the base');
+    if (!n) return 'all changes since ' + baseLabel();
     return 'all ' + n + ' commit' + (n === 1 ? '' : 's') +
-           ' since ' + (state.baseRev || 'the base') + ' (net diff)';
+           ' since ' + baseLabel() + ' (net diff)';
+  }
+
+  // baseLabel names the base revision for the commit bar and the status bar:
+  // the short hash when one was resolved, since that is what identifies the
+  // point in history, and what the user typed otherwise.
+  function baseLabel() {
+    return state.baseShort || shortRev(state.baseRev) || 'HEAD';
   }
 
   function renderCommitBar() {
     commitSelect.innerHTML = '';
     const wt = document.createElement('option');
     wt.value = '';
-    wt.textContent = 'All changes (' + (state.baseRev || 'base') + ' → working tree)';
+    wt.textContent = 'All changes (' + baseLabel() + ' → working tree)';
     commitSelect.appendChild(wt);
     state.commits.forEach((c, i) => {
       const o = document.createElement('option');
@@ -306,7 +323,7 @@
     if (statusBase) {
       statusBase.style.display = '';
       statusBase.textContent = c ? ('reviewing ' + c.short)
-                                 : 'compared to ' + (state.baseRev || 'HEAD');
+                                 : 'compared to ' + baseLabel();
     }
   }
 
@@ -353,8 +370,16 @@
     state.historyEnabled = !!config.historyEnabled;
     state.historyDest = config.historyDest || '';
     state.sideBySide = config.sideBySide !== false;
+    state.baseRev = config.base || '';
+    state.baseShort = config.baseShort || '';
     if (config.base && statusBase) {
-      statusBase.textContent = 'compared to ' + config.base;
+      // The status bar names the base by the revision the user gave and, when
+      // that is a hash, the short form alongside it: the revision is what was
+      // typed, the hash is what the diffs were taken from.
+      const short = config.baseShort && config.baseShort !== config.base
+        ? ' (' + config.baseShort + ')'
+        : '';
+      statusBase.textContent = 'compared to ' + config.base + short;
       statusBase.title = 'Changes are highlighted relative to ' + config.base;
       statusBase.style.display = '';
     }
@@ -672,6 +697,10 @@
         lineEl.classList.add('has-comment');
         if (ann.outdated) lineEl.classList.add('has-outdated-comment');
       }
+      // A marker at the end of the thread's run says where to click to reopen
+      // the comment: the gutter dots already mark every covered line, but they
+      // are drawn by CSS and cannot carry the count or take a click.
+      placeCommentMarker(end);
     }
 
     // Keep the lines being commented on marked after a redraw
@@ -681,6 +710,57 @@
 
     renderDeletionMarkers();
     renderScrollbarMarkers();
+  }
+
+  // The marker standing at the end of a commented run, in the code view's own
+  // frame. Clicking it opens that thread for reading and replying, which is the
+  // affordance the gutter dot cannot give: a dot says a comment exists, this
+  // says where to click to see it.
+  function commentMarker(ann, lineNum) {
+    const marker = document.createElement('button');
+    marker.className = 'comment-marker';
+    marker.type = 'button';
+    marker.dataset.commentMarker = lineNum;
+    const count = (ann.comments || []).length;
+    marker.title = count > 1
+      ? count + ' comments — click to open'
+      : 'Comment — click to open';
+    if (ann.outdated) marker.classList.add('comment-marker-outdated');
+    marker.innerHTML = `<svg><use href="/static/assets/icons.svg#icon-comment"/></svg>` +
+      (count > 1 ? `<span class="comment-marker-count">${count}</span>` : '');
+    marker.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openThread(lineNum);
+    });
+    return marker;
+  }
+
+  // Open a thread for reading and replying: the code view scrolls to it, the run
+  // is marked, and the editor is armed to add a comment on those same lines. The
+  // textarea starts empty — comments are only ever appended, so opening a thread
+  // never puts an existing comment in it to be rewritten.
+  function openThread(lineNum) {
+    const ann = threadAt(lineNum);
+    if (!ann) return;
+    const { start, end } = annotationRange(ann, ann.endLine);
+    state.activeThread = ann.endLine;
+    // The run is marked and the editor armed for the thread, so a comment can
+    // be added where the one being read was made.
+    openThreadEditor(start, end, ann, null, false);
+    selectRange(start, end);
+    scrollToLine(end);
+  }
+
+  // Put the marker for one thread on its line, replacing any that is there. Used
+  // by the render pass and by a save, which updates the open file in place
+  // rather than redrawing it.
+  function placeCommentMarker(lineNum) {
+    const ann = state.annotations[lineNum];
+    const lineEl = lineElement(lineNum);
+    if (!lineEl) return;
+    const old = lineEl.querySelector('.comment-marker');
+    if (old) old.remove();
+    if (ann) lineEl.appendChild(commentMarker(ann, lineNum));
   }
 
   // Take the comment markers off every line of the open file, for when the
@@ -729,8 +809,10 @@
     for (const del of state.diffDeletions) {
       markers.push({ line: del.afterLine || 1, color: '#dc2626' });
     }
-    for (const line of Object.keys(state.annotations)) {
-      markers.push({ line: Number(line), color: 'rgb(37, 99, 235)' });
+    for (const [line, ann] of Object.entries(state.annotations)) {
+      // An outdated thread is marked in the same amber as an outdated line in
+      // the tree, so the strip and the tree agree about what needs attention.
+      markers.push({ line: Number(line), color: ann && ann.outdated ? '#d97706' : 'rgb(37, 99, 235)' });
     }
     if (markers.length === 0) return;
 
@@ -784,40 +866,97 @@
     }
   }
 
-  // Arm the editor for a comment on a run of lines. focusText is set when the
-  // comment follows a click, which is when stealing the caret is wanted; a
-  // mouse highlight is left alone so the selection can still be dragged.
+  // Arm the editor for a comment on a run of lines, from a click or a drag.
+  // A highlight that ends on lines an existing thread covers opens that thread.
   function beginComment(start, end, focusText) {
-    state.selectionStart = start;
-    state.selectionEnd = end;
-    state.editingLine = end; // the annotation is keyed by its end line
-    selectRange(start, end);
-
-    const ann = state.annotations[end];
-    editorLineLabel.textContent = start === end ? 'Line ' + end : 'Lines ' + start + '\u2013' + end;
-    editorTextarea.value = ann ? ann.comment : '';
-    updateEditorVisibility();
-    if (focusText) editorTextarea.focus();
+    const ann = threadAt(end) || threadAt(start);
+    if (ann) {
+      const r = annotationRange(ann, ann.endLine);
+      state.replyTo = null;
+      openThreadEditor(r.start, r.end, ann, null, focusText);
+      return;
+    }
+    state.replyTo = null;
+    openThreadEditor(start, end, null, null, focusText);
   }
 
-  // Click a line to add or edit a comment, extending it into a range when shift
-  // is held. A plain click falls back on the annotation at the end line it lands
-  // on, so the whole range it covers is what gets edited.
+  // The thread covering a line, or null. It is keyed by its end line, so a line
+  // inside a commented run is found by walking the threads and asking which of
+  // them spans it — a click on any line of a range must reopen that range's
+  // comment, not start an empty one on the line clicked.
+  function threadAt(lineNum) {
+    if (state.annotations[lineNum]) return state.annotations[lineNum];
+    for (const ann of Object.values(state.annotations)) {
+      const { start, end } = annotationRange(ann, ann.endLine);
+      if (ann.endLine && lineNum >= start && lineNum <= end) return ann;
+    }
+    return null;
+  }
+
+  // The end line that keys the thread covering a line, or null.
+  function threadKeyAt(lineNum) {
+    const ann = threadAt(lineNum);
+    return ann ? ann.endLine : null;
+  }
+
+  // Click a line to comment on it, extending it into a range when shift is held.
+  // A plain click on a line an existing thread covers opens that thread — the
+  // whole run it spans, with every comment on it — rather than a new one.
   function clickLine(lineNum, shiftKey) {
     let start, end;
     if (shiftKey && state.anchorLine) {
       start = Math.min(state.anchorLine, lineNum);
       end = Math.max(state.anchorLine, lineNum);
-    } else {
-      const existing = state.annotations[lineNum];
-      if (existing) {
-        ({ start, end } = annotationRange(existing, lineNum));
-      } else {
-        start = end = lineNum;
-      }
-      state.anchorLine = lineNum;
+      state.editingLine = end;
+      state.replyTo = null;
+      openThreadEditor(start, end, null);
+      return;
     }
-    beginComment(start, end, true);
+
+    const ann = threadAt(lineNum);
+    if (ann) {
+      const { start: s, end: e } = annotationRange(ann, ann.endLine);
+      state.anchorLine = lineNum;
+      state.replyTo = null;
+      openThreadEditor(s, e, ann);
+      return;
+    }
+
+    state.anchorLine = lineNum;
+    state.replyTo = null;
+    openThreadEditor(lineNum, lineNum, null);
+  }
+
+  // Arm the editor for a new comment on a run of lines. replyingTo names the
+  // comment being answered, when the comment is a reply. The textarea starts
+  // empty either way: comments are only ever appended, so an existing comment is
+  // never loaded into it for editing.
+  function openThreadEditor(start, end, existing, replyingTo, focusText) {
+    state.selectionStart = start;
+    state.selectionEnd = end;
+    state.editingLine = end; // a thread is keyed by its end line
+    state.replyTo = replyingTo || null;
+    state.activeThread = existing ? existing.endLine : null;
+    selectRange(start, end);
+
+    editorLineLabel.textContent = start === end ? 'Line ' + end : 'Lines ' + start + '\u2013' + end;
+    editorTextarea.value = '';
+    editorTextarea.placeholder = replyingTo
+      ? 'Write your reply...'
+      : (existing ? 'Add another comment...' : 'Write your review comment...');
+    updateEditorVisibility();
+    updateThreadActions(existing);
+    renderCommentList();
+    if (focusText) editorTextarea.focus();
+  }
+
+  // Show or hide the suggestion fields for the comment being written, and the
+  // Cancel-reply control. The suggestion is offered for a new comment on a
+  // range, which is where a replacement makes sense.
+  function updateThreadActions(existing) {
+    if (suggestionRow) suggestionRow.style.display = state.showSuggestion ? '' : 'none';
+    if (cancelReplyBtn) cancelReplyBtn.style.display = state.replyTo ? '' : 'none';
+    if (saveBtn) saveBtn.textContent = state.replyTo ? 'Reply' : 'Comment';
   }
 
   // The line a DOM node sits on, or null when it is not inside a line.
@@ -880,31 +1019,53 @@
     });
   });
 
-  // Save comment. A comment on more than one line is sent as a Gerrit-style
-  // range: start_line and end_line, with the end line also as the plain line.
+  // Save a comment, or a reply. A comment on more than one line is sent as a
+  // Gerrit-style range: start_line and end_line, with the end line also as the
+  // plain line. Nothing is ever edited in place: a second comment on the same
+  // lines is appended to the thread, and a reply names the comment it answers.
   async function saveComment() {
     if (!state.currentFile || !state.editingLine) return;
     const text = editorTextarea.value.trim();
-    if (!text) return;
+    const suggestion = suggestionTextarea ? suggestionTextarea.value.replace(/\s+$/, '') : '';
+    if (!text && !suggestion) {
+      showToast('Write a comment or a suggested change first', true);
+      return;
+    }
 
     const start = state.selectionStart || state.editingLine;
     const end = state.editingLine;
     const body = { path: state.currentFile, line: end, comment: text };
+    if (suggestion) body.suggestion = suggestion;
+    if (state.replyTo) body.replyTo = state.replyTo;
     if (start !== end) {
       body.range = { start_line: start, end_line: end };
     }
 
     try {
-      await api('POST', '/api/annotations', body);
-
-      const ann = { comment: text, startLine: start, endLine: end, outdated: false };
-      state.annotations[end] = ann;
+      const result = await api('POST', '/api/annotations', body);
+      const ann = state.annotations[end];
+      if (ann) {
+        ann.comments = ann.comments || [];
+        ann.comments.push({
+          id: result.id,
+          replyTo: state.replyTo || 0,
+          comment: text,
+          suggestion,
+        });
+      } else {
+        state.annotations[end] = {
+          startLine: start,
+          endLine: end,
+          outdated: false,
+          comments: [{ id: result.id, replyTo: state.replyTo || 0, comment: text, suggestion }],
+        };
+      }
       if (!state.allAnnotations[state.currentFile]) {
         state.allAnnotations[state.currentFile] = {};
       }
-      state.allAnnotations[state.currentFile][end] = ann;
+      state.allAnnotations[state.currentFile][end] = state.annotations[end];
 
-      // Update gutter across the range
+      // Update gutter across the range, and the marker that reopens it
       for (let n = start; n <= end; n++) {
         const lineEl = lineElement(n);
         if (lineEl) {
@@ -912,68 +1073,197 @@
           lineEl.classList.remove('has-outdated-comment');
         }
       }
+      placeCommentMarker(end);
 
+      const keep = { start, end, line: end };
       annotationsChanged();
+      // A reply leaves the thread open so the exchange can carry on; a new
+      // comment closes the editor with it.
+      state.replyTo = null;
+      openThreadEditor(keep.start, keep.end, state.annotations[keep.end], null, false);
     } catch (e) {
       showToast('Failed to save: ' + e.message, true);
     }
   }
 
-  // Delete comment
-  async function deleteComment() {
-    if (!state.currentFile || !state.editingLine) return;
+  // Answer a comment: the editor is armed for a reply to it, on its own lines.
+  function replyToComment(lineNum, id) {
+    const ann = state.annotations[lineNum];
+    if (!ann) return;
+    const { start, end } = annotationRange(ann, lineNum);
+    openThreadEditor(start, end, ann, id, true);
+    scrollToLine(end);
+  }
 
-    const end = state.editingLine;
+  // Delete one comment, along with everything answering it — the server marks
+  // them deleted, and they are written out of the file when the review is next
+  // opened or closed. lineNum is the thread it sits in, which the panel knows
+  // even when no thread is open in the editor.
+  //
+  // Replies go with the comment they answer, so a delete that would take any is
+  // confirmed first: the count is what the reviewer is agreeing to.
+  async function deleteComment(id, lineNum) {
+    if (!state.currentFile || !id) return;
+
+    const line = lineNum || state.activeThread || state.editingLine;
+    if (!line) return;
+
+    const thread = state.annotations[line];
+    const replies = thread ? descendantCount(thread.comments || [], id) : 0;
+    if (replies > 0) {
+      const question = replies === 1
+        ? 'Delete this comment and the reply to it?'
+        : 'Delete this comment and the ' + replies + ' replies to it?';
+      if (!confirm(question)) return;
+    }
+
     try {
-      await api('DELETE', '/api/annotations', {
-        path: state.currentFile,
-        line: end,
-      });
+      await api('DELETE', '/api/annotations', { path: state.currentFile, id: id });
 
-      const removed = state.annotations[end];
-      const start = removed ? annotationRange(removed, end).start : end;
-      delete state.annotations[end];
-      if (state.allAnnotations[state.currentFile]) {
-        delete state.allAnnotations[state.currentFile][end];
-        if (Object.keys(state.allAnnotations[state.currentFile]).length === 0) {
-          delete state.allAnnotations[state.currentFile];
+      if (thread) {
+        thread.comments = (thread.comments || []).filter(c => c.id !== id && !answers(c, id, thread.comments));
+        if (thread.comments.length === 0) {
+          delete state.annotations[line];
+          if (state.allAnnotations[state.currentFile]) {
+            delete state.allAnnotations[state.currentFile][line];
+            if (Object.keys(state.allAnnotations[state.currentFile]).length === 0) {
+              delete state.allAnnotations[state.currentFile];
+            }
+          }
+          clearThreadMarkers(annotationRange(thread, line));
+          const openEl = lineElement(line);
+          const old = openEl && openEl.querySelector('.comment-marker');
+          if (old) old.remove();
+        } else {
+          state.allAnnotations[state.currentFile][line] = thread;
+          placeCommentMarker(line);
         }
       }
 
-      // Update gutter across the range
-      for (let n = start; n <= end; n++) {
-        const lineEl = lineElement(n);
-        if (lineEl) {
-          lineEl.classList.remove('has-comment');
-          lineEl.classList.remove('has-outdated-comment');
-        }
-      }
-
+      const wasActive = state.activeThread === line;
       annotationsChanged();
+      if (state.annotations[line]) {
+        const { start, end } = annotationRange(state.annotations[line], line);
+        openThreadEditor(start, end, state.annotations[line], null, false);
+      } else if (wasActive) {
+        state.activeThread = null;
+          }
     } catch (e) {
       showToast('Failed to delete: ' + e.message, true);
     }
   }
 
+  // answers reports whether a comment, or anything answering it in turn, is the
+  // one being deleted. The server deletes the whole subtree, so the client takes
+  // the same set off the screen without asking for the threads again.
+  function answers(c, id, thread) {
+    for (let cur = c; cur && cur.replyTo; ) {
+      if (cur.replyTo === id) return true;
+      cur = thread.find(p => p.id === cur.replyTo);
+    }
+    return false;
+  }
+
+  // descendantCount counts the comments that answer the one with this id, at any
+  // depth: the ones a delete takes with it. The walk is bounded by the number of
+  // comments in the thread, so a malformed exchange cannot spin here.
+  function descendantCount(thread, id) {
+    let count = 0;
+    for (const c of thread) {
+      if (c.id !== id && answers(c, id, thread)) count++;
+    }
+    return count;
+  }
+
+  // Take the comment markers off a run of lines.
+  function clearThreadMarkers({ start, end }) {
+    for (let n = start; n <= end; n++) {
+      const lineEl = lineElement(n);
+      if (lineEl) lineEl.classList.remove('has-comment', 'has-outdated-comment');
+    }
+  }
+
+  // Scroll a line into the middle of the code view.
+  function scrollToLine(lineNum) {
+    const lineEl = lineElement(lineNum);
+    if (lineEl) lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // Show the suggested-change field for the comment being written.
+  function showSuggestion() {
+    state.showSuggestion = true;
+    updateThreadActions();
+    if (suggestionTextarea) {
+      suggestionTextarea.focus();
+      prefillSuggestion();
+    }
+  }
+
+  // Hide the suggested-change field, leaving any text in it alone so it is not
+  // lost by a stray click on the toggle.
+  function hideSuggestion() {
+    state.showSuggestion = false;
+    updateThreadActions();
+  }
+
+  function toggleSuggestion() {
+    if (state.showSuggestion) hideSuggestion();
+    else showSuggestion();
+  }
+
+  // Fill the suggestion field with the lines the comment covers, so a small edit
+  // to them can be made rather than retyped. Line numbers are not included: a
+  // suggestion is the code that should stand there.
+  function prefillSuggestion() {
+    if (!suggestionTextarea || suggestionTextarea.value.trim()) return;
+    const lines = [];
+    for (let n = state.selectionStart; n <= state.selectionEnd; n++) {
+      const lineEl = lineElement(n);
+      if (!lineEl) continue;
+      const code = lineEl.querySelector('.cl');
+      if (code) lines.push(code.textContent.replace(/\n$/, ''));
+    }
+    if (lines.length) suggestionTextarea.value = lines.join('\n');
+    suggestionTextarea.selectionStart = 0;
+    suggestionTextarea.selectionEnd = 0;
+  }
+
+  // Give up on a reply, leaving the thread open for a comment of its own.
+  function cancelReply() {
+    state.replyTo = null;
+    updateThreadActions();
+    editorTextarea.value = '';
+    editorTextarea.placeholder = 'Add another comment...';
+    editorTextarea.focus();
+  }
+
   // Put the editor away, leaving no line marked as being commented on.
   function closeEditor() {
     state.editingLine = null;
+    state.replyTo = null;
     state.selectionStart = null;
     state.selectionEnd = null;
+    state.activeThread = null;
+    state.showSuggestion = false;
     selectRange(0, -1);
+    if (editorTextarea) editorTextarea.value = '';
+    if (suggestionTextarea) suggestionTextarea.value = '';
     updateEditorVisibility();
+    renderCommentList();
   }
 
-  // Bring everything that shows annotations back in line after one changed.
+  // Bring everything that shows annotations back in line after one changed. The
+  // editor goes with it: the thread it was armed for may not be there any more,
+  // and callers that keep it open reopen the thread themselves.
   function annotationsChanged() {
     closeEditor();
-    renderCommentList();
     renderScrollbarMarkers();
     renderTree();
     updateCommentCount();
   }
 
-  // Render comment list in sidebar
+  // Render the threads of the open file in the sidebar, each comment numbered
+  // and a reply indented under the comment it answers.
   function renderCommentList() {
     if (!commentList) return;
 
@@ -989,24 +1279,79 @@
       const outdatedClass = ann && ann.outdated ? ' comment-outdated' : '';
       const outdatedBadge = ann && ann.outdated ? '<span class="outdated-badge">outdated</span>' : '';
       const label = start === end ? 'Line ' + end : 'Lines ' + start + '\u2013' + end;
+      const active = state.activeThread === lineNum ? ' comment-item-active' : '';
+      const comments = (ann && ann.comments) || [];
       return `
-        <div class="comment-item${outdatedClass}" data-comment-line="${lineNum}">
-          <div class="comment-line">${label} ${outdatedBadge}</div>
-          <div class="comment-text">${escapeHtml(ann ? ann.comment : '')}</div>
+        <div class="comment-item${outdatedClass}${active}" data-comment-line="${lineNum}">
+          <div class="comment-head">
+            <span class="comment-line">${label}</span> ${outdatedBadge}
+          </div>
+          ${comments.map(c => commentHtml(c, comments, lineNum)).join('')}
         </div>
       `;
     }).join('');
 
-    // Attach click handlers
+    // Clicking a thread's heading opens it; clicking a comment's body does not,
+    // so text can be selected without the editor taking over.
     commentList.querySelectorAll('.comment-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const ln = parseInt(item.dataset.commentLine, 10);
+      const ln = parseInt(item.dataset.commentLine, 10);
+      item.querySelector('.comment-head').addEventListener('click', () => {
         clickLine(ln);
-        // Scroll to line
-        const lineEl = lineElement(ln);
-        if (lineEl) lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        scrollToLine(ln);
       });
     });
+    commentList.querySelectorAll('[data-reply]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        replyToComment(parseInt(btn.dataset.replyLine, 10), parseInt(btn.dataset.reply, 10));
+      });
+    });
+    commentList.querySelectorAll('[data-delete]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.delete, 10);
+        deleteComment(id, parseInt(btn.dataset.deleteLine, 10));
+      });
+    });
+    commentList.querySelectorAll('[data-open-line]').forEach(el => {
+      el.addEventListener('click', () => {
+        const ln = parseInt(el.dataset.openLine, 10);
+        clickLine(ln);
+        scrollToLine(ln);
+      });
+    });
+  }
+
+  // One comment in the panel: its text, the suggested change it carries, and the
+  // reply and delete controls. Depth indents a reply under what it answers.
+  function commentHtml(c, thread, lineNum) {
+    const depth = replyDepth(c, thread);
+    const suggest = c.suggestion
+      ? `<pre class="comment-suggestion"><code>${escapeHtml(c.suggestion)}</code></pre>`
+      : '';
+    return `
+      <div class="comment-body" style="margin-left:${depth * 0.9}rem" data-comment-id="${c.id}">
+        <div class="comment-text">${escapeHtml(c.comment || '')}</div>
+        ${suggest}
+        <div class="comment-actions">
+          <button class="link-btn" data-reply="${c.id}" data-reply-line="${lineNum}">Reply</button>
+          <button class="link-btn danger" data-delete="${c.id}" data-delete-line="${lineNum}">Delete</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // How deep a comment sits below the comment the thread began with, which is
+  // what the panel indents by. A reply to something unknown sits at the root.
+  // thread is the array of comments the id is looked up in.
+  function replyDepth(c, thread) {
+    let depth = 0;
+    for (let cur = c; cur && cur.replyTo && depth < 20; depth++) {
+      const parent = thread.find(p => p.id === cur.replyTo);
+      if (!parent) break;
+      cur = parent;
+    }
+    return depth;
   }
 
   // Update editor visibility
@@ -1021,7 +1366,9 @@
     if (!statusCommentCount) return;
     let count = 0;
     for (const file in state.allAnnotations) {
-      count += Object.keys(state.allAnnotations[file]).length;
+      for (const ann of Object.values(state.allAnnotations[file])) {
+        count += (ann.comments || []).length;
+      }
     }
     statusCommentCount.textContent = count + ' comment' + (count !== 1 ? 's' : '');
   }
@@ -1045,16 +1392,39 @@
   let diffTooltipRaf = null;
   let diffTooltipPinned = false;
 
-  // sbLeftLabel names the revision the left column holds: the base the review
-  // is measured against, or, when a single commit is being stepped through,
-  // that commit's parent, which is what its diff is taken from.
+  // sbLeftLabel names the revision the left column holds, abbreviated the way
+  // git abbreviates it: the base the review is measured against, or, when a
+  // single commit is being stepped through, that commit's parent, which is what
+  // its diff is taken from.
   function sbLeftLabel() {
-    if (!state.rev) return state.baseRev || 'HEAD';
+    if (!state.rev) return state.baseShort || shortRev(state.baseRev) || 'HEAD';
     const c = state.commits.find(c => c.hash === state.rev);
-    if (!c) return state.rev.slice(0, 8) + '^';
+    if (!c) return shortRev(state.rev) + '^';
     return c.short + '^';
   }
 
+  // shortRev abbreviates a revision the way git does. A named revision that is
+  // not a hash — a branch or tag — is left alone: it has no longer form to
+  // shorten, and the name is the useful thing to read.
+  function shortRev(rev) {
+    if (!rev) return '';
+    return /^[0-9a-f]{40}$/i.test(rev) ? rev.slice(0, 7) : rev;
+  }
+
+  // hunkOrigin names the commit that put the hunk there, as a line for the
+  // pane's header: the abbreviated hash, and the subject of its commit message
+  // on hover for the reader who wants to know what it was. A hunk with no
+  // commit to name — one only in the working tree — says so rather than leaving
+  // the reader wondering what is missing.
+  function hunkOrigin(hunk) {
+    const c = hunk && hunk.commit;
+    if (!c || !c.short) {
+      return '<span class="sb-origin sb-origin-none" title="Not committed yet">uncommitted</span>';
+    }
+    const detail = [c.short, c.subject, c.author, c.date].filter(Boolean).join('\n');
+    return '<span class="sb-origin" title="' + escapeHtml(detail) + '">' +
+      escapeHtml(c.short) + '</span>';
+  }
   // diffTooltipContent renders a hunk the way the current setting asks for.
   function diffTooltipContent(hunk) {
     return state.sideBySide ? hunkSideBySide(hunk) : hunkUnified(hunk);
@@ -1082,6 +1452,7 @@
         '<span class="sb-col">' + escapeHtml(annotateTargetLabel()) + '</span>' +
         '<button type="button" class="sb-pin" title="Keep this hunk open beside the code">pin</button>' +
       '</div>' +
+      '<div class="sb-origin-row">' + hunkOrigin(hunk) + '</div>' +
       '<div class="sb-grid">' + cells + '</div>' +
       '<div class="sb-foot">pinned — press Esc or click unpin to close</div>';
   }
@@ -1119,10 +1490,11 @@
       if (row.oldNo) lines.push('-' + row.old);
       if (row.newNo) lines.push('+' + row.new);
     }
-    return '<pre>' + lines.map(line => {
-      const cls = line.startsWith('+') ? ' class="diff-add"' : line.startsWith('-') ? ' class="diff-del"' : '';
-      return '<span' + cls + '>' + escapeHtml(line) + '</span>';
-    }).join('\n') + '</pre>';
+    return '<div class="sb-origin-row">' + hunkOrigin(hunk) + '</div>' +
+      '<pre>' + lines.map(line => {
+        const cls = line.startsWith('+') ? ' class="diff-add"' : line.startsWith('-') ? ' class="diff-del"' : '';
+        return '<span' + cls + '>' + escapeHtml(line) + '</span>';
+      }).join('\n') + '</pre>';
   }
 
   function showDiffTooltip(event, hunk) {
@@ -1324,6 +1696,9 @@
   }
 
   // Expose functions for inline handlers
-  window.app = { saveComment, deleteComment, closeEditor, newReview };
+  window.app = {
+    saveComment, deleteComment, closeEditor, newReview,
+    showSuggestion, hideSuggestion, toggleSuggestion, cancelReply,
+  };
 
 })();

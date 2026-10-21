@@ -31,7 +31,7 @@ func TestRoundTrip_MarkdownInComment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := st.Set("a.go", 3, 3, comment); err != nil {
+			if _, err := st.AppendComment("a.go", 3, 3, 0, comment, ""); err != nil {
 				t.Fatal(err)
 			}
 
@@ -43,9 +43,9 @@ func TestRoundTrip_MarkdownInComment(t *testing.T) {
 			if ann == nil {
 				t.Fatalf("annotation lost, file was:\n%s", mustRead(t, mdPath))
 			}
-			if ann.Comment != comment {
+			if firstComment(ann) != comment {
 				t.Errorf("comment changed:\n got: %q\nwant: %q\nfile was:\n%s",
-					ann.Comment, comment, mustRead(t, mdPath))
+					firstComment(ann), comment, mustRead(t, mdPath))
 			}
 		})
 	}
@@ -60,9 +60,9 @@ func TestRoundTrip_MultipleAnnotations(t *testing.T) {
 	mdPath := filepath.Join(dir, "REVIEW.md")
 
 	st, _ := Load(mdPath, dir)
-	st.Set("a.go", 1, 1, "first\n\n```\n#### Line 42\n```")
-	st.Set("a.go", 4, 4, "second")
-	st.Set("b.go", 2, 2, "third\n---")
+	st.AppendComment("a.go", 1, 1, 0, "first\n\n```\n#### Line 42\n```", "")
+	st.AppendComment("a.go", 4, 4, 0, "second", "")
+	st.AppendComment("b.go", 2, 2, 0, "third\n---", "")
 
 	reloaded, _ := Load(mdPath, dir)
 	if got := len(reloaded.data); got != 2 {
@@ -71,10 +71,10 @@ func TestRoundTrip_MultipleAnnotations(t *testing.T) {
 	if got := len(reloaded.data["a.go"]); got != 2 {
 		t.Errorf("expected 2 annotations in a.go, got %d", got)
 	}
-	if got := reloaded.data["a.go"][4]; got == nil || got.Comment != "second" {
+	if got := reloaded.data["a.go"][4]; got == nil || firstComment(got) != "second" {
 		t.Errorf("second annotation not parsed: %+v", got)
 	}
-	if got := reloaded.data["b.go"][2]; got == nil || got.Comment != "third\n---" {
+	if got := reloaded.data["b.go"][2]; got == nil || firstComment(got) != "third\n---" {
 		t.Errorf("third annotation not parsed: %+v", got)
 	}
 }
@@ -102,7 +102,7 @@ func TestRoundTrip_LongLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("bundle.js", 2, 2, "this line is huge"); err != nil {
+	if _, err := st.AppendComment("bundle.js", 2, 2, 0, "this line is huge", ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(st.data["bundle.js"][2].Context); got != 3 {
@@ -135,7 +135,7 @@ func TestSerialize_CommentStaysPlainText(t *testing.T) {
 		t.Fatal(err)
 	}
 	comment := "Prefer a logger:\n\n```go\nlog.Println(\"hi\")\n```\n\nIt keeps output consistent."
-	if err := st.Set("a.go", 3, 3, comment); err != nil {
+	if _, err := st.AppendComment("a.go", 3, 3, 0, comment, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -157,7 +157,7 @@ func TestSerialize_EscapesOnlyHeadingLines(t *testing.T) {
 
 	st, _ := Load(mdPath, dir)
 	comment := "See below.\n\n#### Line 99\n\nA sample:\n\n```md\n#### Line 42\n```"
-	if err := st.Set("a.go", 2, 2, comment); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, comment, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,7 +173,7 @@ func TestSerialize_EscapesOnlyHeadingLines(t *testing.T) {
 	}
 
 	reloaded, _ := Load(mdPath, dir)
-	if got := reloaded.data["a.go"][2]; got == nil || got.Comment != comment {
+	if got := reloaded.data["a.go"][2]; got == nil || firstComment(got) != comment {
 		t.Errorf("comment did not survive:\n got: %#v\nwant: %q", got, comment)
 	}
 }
@@ -202,7 +202,7 @@ func TestParse_LegacyFileWithoutContext(t *testing.T) {
 	for file, lines := range want {
 		for line, comment := range lines {
 			got := data[file][line]
-			if got == nil || got.Comment != comment {
+			if got == nil || firstComment(got) != comment {
 				t.Errorf("%s:%d: got %#v, want %q", file, line, got, comment)
 			}
 		}
@@ -218,8 +218,8 @@ func TestSerialize_ContextFenceIsMarked(t *testing.T) {
 	mdPath := filepath.Join(dir, "REVIEW.md")
 
 	st, _ := Load(mdPath, dir)
-	st.Set("a.go", 2, 2, "a note")
-	st.Set("notes.unknownext", 2, 2, "another note")
+	st.AppendComment("a.go", 2, 2, 0, "a note", "")
+	st.AppendComment("notes.unknownext", 2, 2, 0, "another note", "")
 
 	written := mustRead(t, mdPath)
 	if !strings.Contains(written, "```go context\n") {
@@ -239,7 +239,7 @@ func TestRoundTrip_CommentEndingInNumberedBlock(t *testing.T) {
 
 	comment := "The numbering is off here:\n\n```\n1: first\n2: second\n```"
 	st, _ := Load(mdPath, dir)
-	if err := st.Set("a.go", 3, 3, comment); err != nil {
+	if _, err := st.AppendComment("a.go", 3, 3, 0, comment, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,8 +248,8 @@ func TestRoundTrip_CommentEndingInNumberedBlock(t *testing.T) {
 	if ann == nil {
 		t.Fatalf("annotation lost, file was:\n%s", mustRead(t, mdPath))
 	}
-	if ann.Comment != comment {
-		t.Errorf("comment changed:\n got: %q\nwant: %q", ann.Comment, comment)
+	if firstComment(ann) != comment {
+		t.Errorf("comment changed:\n got: %q\nwant: %q", firstComment(ann), comment)
 	}
 	if ann.ContextFrom != 1 || len(ann.Context) != 5 {
 		t.Errorf("expected the real context block, got from=%d lines=%v", ann.ContextFrom, ann.Context)
@@ -274,8 +274,8 @@ func TestParse_UnmarkedContextStillRead(t *testing.T) {
 	if ann == nil {
 		t.Fatal("expected annotation on line 5")
 	}
-	if ann.Comment != "an older comment" {
-		t.Errorf("comment: got %q", ann.Comment)
+	if firstComment(ann) != "an older comment" {
+		t.Errorf("comment: got %q", firstComment(ann))
 	}
 	if ann.ContextFrom != 4 || len(ann.Context) != 2 {
 		t.Errorf("context: got from=%d lines=%v", ann.ContextFrom, ann.Context)
@@ -283,4 +283,13 @@ func TestParse_UnmarkedContextStillRead(t *testing.T) {
 	if !ann.Outdated {
 		t.Error("expected the outdated mark to be kept")
 	}
+}
+
+// firstComment returns the text of the first comment in a thread, which is what
+// a test written before threads existed means by "the comment".
+func firstComment(t *Thread) string {
+	if t == nil || len(t.Comments) == 0 {
+		return ""
+	}
+	return t.Comments[0].Comment
 }

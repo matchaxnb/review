@@ -268,12 +268,29 @@ func TestFileEndpoint_NonexistentFile(t *testing.T) {
 
 // ---- /api/annotations tests ----
 
-// annotationObj is the response shape: {comment, startLine, endLine, outdated}
+// annotationObj is the response shape: a thread of comments keyed by its end
+// line, each comment carrying the id it was written under.
 type annotationObj struct {
-	Comment   string `json:"comment"`
-	StartLine int    `json:"startLine"`
-	EndLine   int    `json:"endLine"`
-	Outdated  bool   `json:"outdated"`
+	StartLine int          `json:"startLine"`
+	EndLine   int          `json:"endLine"`
+	Outdated  bool         `json:"outdated"`
+	Comments  []commentObj `json:"comments"`
+}
+
+type commentObj struct {
+	ID         int64  `json:"id"`
+	ReplyTo    int64  `json:"replyTo"`
+	Comment    string `json:"comment"`
+	Suggestion string `json:"suggestion"`
+}
+
+// text returns the first comment's text, which is what a test written before
+// threads existed means by "the comment".
+func (a annotationObj) text() string {
+	if len(a.Comments) == 0 {
+		return ""
+	}
+	return a.Comments[0].Comment
 }
 
 func TestFileEndpoint_BinaryFile(t *testing.T) {
@@ -392,7 +409,7 @@ func TestAnnotations_SetAndGet(t *testing.T) {
 		t.Fatalf("failed to decode annotations: %v", err)
 	}
 
-	if annots["3"].Comment != "This is the main function" {
+	if annots["3"].text() != "This is the main function" {
 		t.Errorf("expected annotation on line 3, got %v", annots)
 	}
 	if annots["3"].Outdated {
@@ -459,7 +476,7 @@ func TestAnnotations_SetMultipleAndGetAll(t *testing.T) {
 	}
 }
 
-func TestAnnotations_Update(t *testing.T) {
+func TestAnnotations_Append(t *testing.T) {
 	ts, _, cleanup := setupTestServer(t)
 	defer cleanup()
 
@@ -471,8 +488,8 @@ func TestAnnotations_Update(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Update it
-	body = `{"path":"hello.go","line":3,"comment":"Updated comment"}`
+	// Commenting on the same line again appends to the thread it holds
+	body = `{"path":"hello.go","line":3,"comment":"A second thought"}`
 	resp, err = http.Post(ts.URL+"/api/annotations", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -491,8 +508,15 @@ func TestAnnotations_Update(t *testing.T) {
 		t.Fatalf("failed to decode annotations: %v", err)
 	}
 
-	if annots["3"].Comment != "Updated comment" {
-		t.Errorf("expected updated comment, got %v", annots)
+	got := annots["3"].Comments
+	if len(got) != 2 {
+		t.Fatalf("expected both comments in the thread, got %v", got)
+	}
+	if got[0].Comment != "Original comment" || got[1].Comment != "A second thought" {
+		t.Errorf("comments appended out of order or lost: %v", got)
+	}
+	if got[1].ID <= got[0].ID {
+		t.Errorf("the second comment should carry a later id: %v", got)
 	}
 }
 
@@ -506,10 +530,16 @@ func TestAnnotations_Delete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 
 	// Delete it
-	body = `{"path":"hello.go","line":3}`
+	body = fmt.Sprintf(`{"path":"hello.go","id":%d}`, created.ID)
 	req, err := http.NewRequest("DELETE", ts.URL+"/api/annotations", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -549,6 +579,83 @@ func TestAnnotations_Delete(t *testing.T) {
 	}
 }
 
+// TestAnnotations_Reply checks that answering a comment lands in the thread
+// that comment belongs to, however the reply names its lines, and that deleting
+// a comment takes its answers with it.
+func TestAnnotations_Reply(t *testing.T) {
+	ts, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	post := func(body string) int64 {
+		t.Helper()
+		resp, err := http.Post(ts.URL+"/api/annotations", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, respBody)
+		}
+		var created struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		return created.ID
+	}
+
+	root := post(`{"path":"multiline.txt","line":5,"comment":"root comment"}`)
+	reply := post(fmt.Sprintf(`{"path":"multiline.txt","line":9,"replyTo":%d,"comment":"a reply"}`, root))
+	post(fmt.Sprintf(`{"path":"multiline.txt","line":5,"replyTo":%d,"comment":"a reply to the reply"}`, reply))
+
+	get := func() map[string]annotationObj {
+		t.Helper()
+		resp, err := http.Get(ts.URL + "/api/annotations?path=multiline.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var annots map[string]annotationObj
+		if err := json.NewDecoder(resp.Body).Decode(&annots); err != nil {
+			t.Fatal(err)
+		}
+		return annots
+	}
+
+	annots := get()
+	if len(annots) != 1 {
+		t.Fatalf("a reply should not open a second thread, got %v", annots)
+	}
+	thread := annots["5"]
+	if len(thread.Comments) != 3 {
+		t.Fatalf("expected the whole exchange in one thread, got %v", thread.Comments)
+	}
+	if thread.Comments[1].ReplyTo != root || thread.Comments[2].ReplyTo != reply {
+		t.Errorf("replies lost what they answer: %v", thread.Comments)
+	}
+
+	// Deleting the first reply takes the answer to it with it, and leaves the
+	// comment it answered.
+	req, err := http.NewRequest("DELETE", ts.URL+"/api/annotations",
+		strings.NewReader(fmt.Sprintf(`{"path":"multiline.txt","id":%d}`, reply)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	thread = get()["5"]
+	if len(thread.Comments) != 1 || thread.Comments[0].ID != root {
+		t.Errorf("expected only the root comment to stand, got %v", thread.Comments)
+	}
+}
+
 func TestAnnotations_SetRange(t *testing.T) {
 	ts, _, cleanup := setupTestServer(t)
 	defer cleanup()
@@ -584,8 +691,8 @@ func TestAnnotations_SetRange(t *testing.T) {
 	if got.StartLine != 10 || got.EndLine != 20 {
 		t.Errorf("range round-trip: got %d-%d, want 10-20", got.StartLine, got.EndLine)
 	}
-	if got.Comment != "These lines belong together" {
-		t.Errorf("unexpected comment: %q", got.Comment)
+	if got.text() != "These lines belong together" {
+		t.Errorf("unexpected comment: %q", got.text())
 	}
 }
 
@@ -779,7 +886,7 @@ func TestAnnotations_DeleteNonexistent(t *testing.T) {
 	defer cleanup()
 
 	// Should succeed even if nothing to delete
-	body := `{"path":"hello.go","line":999}`
+	body := `{"path":"hello.go","id":999}`
 	req, err := http.NewRequest("DELETE", ts.URL+"/api/annotations", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -986,14 +1093,20 @@ func TestAnnotations_PostResponseFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should be valid JSON
-	var result map[string]string
+	// Should be valid JSON, naming the id the comment was written under
+	var result struct {
+		Status string `json:"status"`
+		ID     int64  `json:"id"`
+	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		t.Fatalf("response should be valid JSON, got: %s, error: %v", string(respBody), err)
 	}
 
-	if result["status"] != "ok" {
+	if result.Status != "ok" {
 		t.Errorf("expected status ok, got %v", result)
+	}
+	if result.ID <= 0 {
+		t.Errorf("expected the new comment's id, got %v", result.ID)
 	}
 }
 
@@ -1001,16 +1114,22 @@ func TestAnnotations_DeleteResponseFormat(t *testing.T) {
 	ts, _, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	// First set an annotation
+	// First set an annotation, noting the id it is written under
 	body := `{"path":"hello.go","line":1,"comment":"test"}`
 	resp, err := http.Post(ts.URL+"/api/annotations", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 
 	// Now delete it
-	body = `{"path":"hello.go","line":1}`
+	body = fmt.Sprintf(`{"path":"hello.go","id":%d}`, created.ID)
 	req, err := http.NewRequest("DELETE", ts.URL+"/api/annotations", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)

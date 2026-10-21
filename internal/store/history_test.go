@@ -119,7 +119,7 @@ func TestArchiveReviewMovesToHistory(t *testing.T) {
 	if _, err := SetupReviewHistory(dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 	// A known modification time fixes the name the review is archived under.
@@ -156,7 +156,7 @@ func TestArchiveReviewMovesToHistory(t *testing.T) {
 // history is deleted and reports no archived path.
 func TestArchiveReviewWithoutHistoryDeletes(t *testing.T) {
 	st, _ := newHistoryStore(t)
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -189,7 +189,7 @@ func TestArchiveReviewNumbersSameStamp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(st.MdPath(), stamp, stamp); err != nil {
@@ -219,7 +219,7 @@ func TestNextHistoryDestMatchesArchive(t *testing.T) {
 	if _, err := SetupReviewHistory(dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 	stamp := time.Date(2026, 10, 8, 15, 30, 0, 0, time.Local)
@@ -256,7 +256,7 @@ func TestNextHistoryDestWithoutReview(t *testing.T) {
 		t.Errorf("expected no destination without a review, got %q", dest)
 	}
 
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(filepath.Join(dir, ReviewDir)); err != nil {

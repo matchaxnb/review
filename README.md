@@ -7,18 +7,21 @@ The tool was vibecoded as a simple way to review agentic coded files. The markdo
 ## Features
 
 - **File tree navigation** — browse the project with expandable directories
-- **Inline annotations** — click any line to add, edit, or delete review comments, or highlight several lines to comment on a range
+- **Inline annotations** — click any line to comment, or highlight several lines to comment on a range
+- **Threads of comments** — a line's comments accumulate rather than being rewritten: reply to a comment, and every comment keeps the id it was written under
+- **Suggested changes** — attach a Gerrit-style `suggestion` block to a comment: the replacement lines for the range, shown as a diff beside the comment and written into `REVIEW.md`
+- **Reopening a comment** — a marker on the commented line, and the gutter dots, open the existing thread instead of starting an empty comment; clicking any line of a commented range opens the whole thread
 - **Syntax highlighting** — powered by [Chroma](https://github.com/alecthomas/chroma)
 - **Git status integration** — files and directories are color-coded by git status (modified, staged, untracked, etc.)
-- **Git diff markers** — changed, added, and deleted lines are marked in the gutter; hover to see the hunk as a side-by-side diff, with the base revision's lines opposite the reviewed ones
+- **Git diff markers** — changed, added, and deleted lines are marked in the gutter; hover to see the hunk as a side-by-side diff, with the base revision's lines opposite the reviewed ones, and the commit that put the hunk there named above them
 - **Compare against a base** — review an already committed branch by diffing it against a branch, tag, or commit
 - **Scrollbar annotations** — colored markers on the scrollbar show where comments and changes are in long files
 - **Live updates** — files reload automatically when changed on disk via WebSocket-based file watching
-- **Drift detection** — annotations automatically relocate when code moves, or are marked outdated if context is lost
-- **New Review** — start a fresh review with one click, clearing all existing annotations
+- **Drift detection** — threads automatically relocate when code moves, or are marked outdated if context is lost
+- **New Review** — start a fresh review with one click, clearing all existing comments
 - **Review history** — optionally keep retired reviews in `.review-history/` instead of deleting them, each named after its last change and kept out of git
 - **Graceful shutdown** — the browser tab closes automatically when the server stops
-- **Markdown storage** — all annotations are saved to `REVIEW.md` with surrounding code context and a header naming the commit the review was taken from, making them easy to read and share without the tool
+- **Markdown storage** — all comments are saved to `REVIEW.md` with surrounding code context and a header naming the commit the review was taken from, making them easy to read and share without the tool
 - **Agent instruction companion skill** — the `REVIEW.md` format ships as a skill in `skills/review-md/`, installed with `make install-skill`, so an agent can read how to act on a review without being told
 - **Single binary** — the web frontend is embedded in the Go binary; no external files or dependencies needed at runtime
 
@@ -82,6 +85,31 @@ Hovering a changed line's gutter shows its hunk with the base revision on the le
 
 The left column is a reading aid only. Annotations are still made on the file under review, and only there: the pane cannot be clicked to comment, so a review never lands on the base revision.
 
+Above the two columns the pane names the commit that put the hunk there — the
+most recent commit behind the lines it added or replaced — with the short hash
+and, on hover, the first line of its commit message. A hunk whose lines are not
+committed yet reads `uncommitted`, and the column headings name their revisions
+by short hash. That commit is what the change came from; the base named in the
+header is still what the diff is measured against, and the two differ whenever
+the change reached the reviewed tree through an earlier commit.
+
+### Reloading the Review
+
+The review is read again when the process is sent `SIGHUP`. That is what to do
+after editing `REVIEW.md` by hand, or after an agent has worked through the
+comments and rewritten it: the file is parsed afresh, the comments deleted since
+it was last written are written out for good, and every thread is checked against
+the source to relocate the ones that moved.
+
+```sh
+kill -HUP $(pgrep -f 'review -dir')
+```
+
+Clients are sent the reloaded review and redraw themselves; nothing has to be
+restarted, and the browser tab stays open. A file that cannot be read is left
+alone and the failure is logged — a running review is not thrown away because
+one read failed.
+
 ### Review History
 
 By default **New Review** deletes `REVIEW.md` and its comments with it. Enabling review history keeps them instead:
@@ -100,9 +128,9 @@ The tool serves a three-panel web UI:
 
 1. **File tree** (left) — project files with git status indicators and comment markers
 2. **Code viewer** (center) — syntax-highlighted source with clickable lines
-3. **Comment sidebar** (right) — list of annotations for the current file and an editor
+3. **Comment sidebar** (right) — the current file's threads and an editor
 
-Annotations are stored in memory and flushed to `REVIEW.md` in the project root on every change. The markdown file groups comments by file and includes a few lines of code context around each annotated line, so it remains useful on its own.
+Comments are stored in memory and flushed to `REVIEW.md` in the project root on every change. The markdown file groups threads by file and includes a few lines of code context around each annotated line, so it remains useful on its own.
 
 Its header records where the review was taken from and when it was made, so a review file stays meaningful on its own:
 
@@ -124,10 +152,10 @@ The tool exposes a JSON API for the frontend:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/tree` | File tree structure |
-| `GET` | `/api/file?path=<path>` | Syntax-highlighted file content with diff data |
-| `GET` | `/api/annotations?path=<path>` | Annotations (all or per-file) |
-| `POST` | `/api/annotations` | Create or update an annotation |
-| `DELETE` | `/api/annotations` | Delete an annotation |
+| `GET` | `/api/file?path=<path>` | Syntax-highlighted file content with diff data; each hunk names the commit that put it there |
+| `GET` | `/api/annotations?path=<path>` | Threads (all or per-file), each with its comments |
+| `POST` | `/api/annotations` | Append a comment, a reply (`replyTo`), or a suggested change (`suggestion`); answers with the new comment's `id` |
+| `DELETE` | `/api/annotations` | Delete the comment with the given `id`, and everything answering it |
 | `GET` | `/api/git-status` | Git status for all files |
 | `GET` | `/api/config` | Review settings, currently the base revision and whether review history is enabled |
 | `DELETE` | `/api/review` | Start a new review; delete REVIEW.md, or move it to the review history |
@@ -136,8 +164,9 @@ The tool exposes a JSON API for the frontend:
 ### Instructions for Agents
 
 The `REVIEW.md` format — its grammar, what `(outdated)` means, how to act on
-comments — ships as a companion skill in `skills/review-md/`. `make install-skill`
-copies it where agents read skills:
+comments, and the rule that an agent never deletes a comment of its own accord —
+ships as a companion skill in `skills/review-md/`. `make install-skill` copies it
+where agents read skills:
 
 ```sh
 make install-skill              # → ~/.agents/skills/review-md
@@ -153,8 +182,7 @@ reviewed project: it belongs to its own repository, and an `AGENTS.md` or
 
 A comment can cover a run of lines rather than a single one. Highlight the lines
 you want in the code view — drag the mouse across them, or click one line and
-shift-click another — then write the comment as usual. A plain click edits the
-comment already on the line.
+shift-click another — then write the comment as usual.
 
 The range is sent in [Gerrit's `CommentRange`][comment-range] shape, so a
 comment on lines 10 to 20 of a file reads:
@@ -165,10 +193,54 @@ comment on lines 10 to 20 of a file reads:
   "comment": "These lines belong together" }
 ```
 
-As in Gerrit, the range's end line is what the annotation is keyed by, and
-`line` is taken as that end line. Character offsets are not used: this tool
-comments on whole lines. In `REVIEW.md` a range is written as a `#### Lines
-10-20` heading, while a single-line comment keeps the `#### Line N` form.
+As in Gerrit, the range's end line is what the thread is keyed by, and `line` is
+taken as that end line. Character offsets are not used: this tool comments on
+whole lines. In `REVIEW.md` a range is written as a `#### Lines 10-20` heading,
+while a single-line comment keeps the `#### Line N` form.
+
+### Threads, Replies and Suggested Changes
+
+Comments are append-only. Commenting on lines that already have a comment adds a
+second comment to that thread rather than replacing what is there, and answering
+a comment (`Reply`) appends a reply naming it:
+
+```markdown
+#### Line 41 @1729532520
+
+This swallows the error.
+
+#### Line 41 @1729532584
+
+_In reply to: 1729532520_
+
+Fair point — I will return it.
+```
+
+Each comment carries the id it was written under after the `@`: the Unix time it
+was written, unique within the file. A thread, not a comment, owns the code
+context, and relocation moves all of its comments together, so `(outdated)`
+applies to the thread as a whole.
+
+A comment may also carry a **suggested change** — the lines that should replace
+the annotated range, written under a `suggestion` fence:
+
+```markdown
+#### Line 42 @1729532610
+
+This needs a guard clause.
+
+```suggestion
+	if err != nil {
+		return err
+	}
+```
+```
+
+The suggestion is written without line numbers, since it is the code that should
+stand there rather than a quote of code that does. The tool shows it beside the
+comment; it does not apply it. Deleting a comment deletes its replies with it — the
+count is confirmed first — and they are marked deleted, taken off the screen, and
+written out of the file when the tool next opens or closes.
 
 [comment-range]: https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-range
 

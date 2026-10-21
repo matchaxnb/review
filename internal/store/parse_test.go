@@ -43,8 +43,8 @@ This is a comment
 	if ann == nil {
 		t.Fatal("expected annotation on line 5")
 	}
-	if ann.Comment != "This is a comment" {
-		t.Errorf("unexpected comment: %q", ann.Comment)
+	if firstComment(ann) != "This is a comment" {
+		t.Errorf("unexpected comment: %q", firstComment(ann))
 	}
 	if ann.ContextFrom != 3 {
 		t.Errorf("expected ContextFrom=3, got %d", ann.ContextFrom)
@@ -154,7 +154,7 @@ func TestParse_StartedPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("test.go", 2, 2, "new comment"); err != nil {
+	if _, err := st.AppendComment("test.go", 2, 2, 0, "new comment", ""); err != nil {
 		t.Fatal(err)
 	}
 

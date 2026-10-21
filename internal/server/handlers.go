@@ -22,6 +22,10 @@ type handlers struct {
 	rootDir     string
 	base        gitstatus.Base
 	highlighter *highlight.Cache
+	// blame remembers which commit each line of a file came from, so naming the
+	// commit behind a diff hunk costs one stat per file read rather than a git
+	// subprocess per hunk shown.
+	blame *gitstatus.BlameCache
 	// rev, when non-empty, is the exact revision (commit) whose content the
 	// file/tree endpoints serve. It powers line-by-line history review: the
 	// frontend selects a commit and the server shows that commit's tree,
@@ -134,6 +138,9 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 		hl := h.highlighter.Highlight(path, string(content))
 		parent := gitstatus.ParentOf(h.rootDir, rev)
 		diff := gitstatus.GetFileDiffAt(h.rootDir, parent, rev, path, content)
+		// The hunk was put there by whatever the file's history at this
+		// revision says, so the blame is taken at the same revision.
+		gitstatus.AttributeHunks(diff.Hunks, h.blame.Get(h.rootDir, rev, path))
 		jsonResponse(w, fileResponse{
 			HTML:          hl.HTML,
 			Language:      hl.Language,
@@ -173,6 +180,10 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 
 	hl := h.highlighter.Highlight(path, string(content))
 	diff := gitstatus.GetFileDiff(h.rootDir, h.base, path, content)
+	// The working tree is what is being reviewed, so the blame is taken over
+	// it: a hunk whose lines are not committed yet has no commit to name, which
+	// is the answer for a change being made right now.
+	gitstatus.AttributeHunks(diff.Hunks, h.blame.Get(h.rootDir, "", path))
 	resp := fileResponse{
 		HTML:          hl.HTML,
 		Language:      hl.Language,
@@ -183,36 +194,54 @@ func (h *handlers) handleFile(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, resp)
 }
 
-// annotationResponse is the JSON shape of a single annotation, keyed in a file's
-// map by its end line.
-type annotationResponse struct {
-	Comment   string `json:"comment"`
-	StartLine int    `json:"startLine"` // first line the comment covers
-	EndLine   int    `json:"endLine"`   // last line the comment covers
-	Outdated  bool   `json:"outdated"`
+// commentResponse is the JSON shape of one comment in a thread.
+type commentResponse struct {
+	ID         int64  `json:"id"`
+	ReplyTo    int64  `json:"replyTo,omitempty"`
+	Comment    string `json:"comment"`
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
-// fileAnnotations converts one file's annotations into the shape clients
-// receive, keyed by line number.
-func fileAnnotations(anns map[int]*store.Annotation) map[string]annotationResponse {
-	result := make(map[string]annotationResponse, len(anns))
-	for line, ann := range anns {
+// annotationResponse is the JSON shape of the thread on one line or run of
+// lines, keyed in a file's map by its end line.
+type annotationResponse struct {
+	StartLine int               `json:"startLine"` // first line the thread covers
+	EndLine   int               `json:"endLine"`   // last line the thread covers
+	Outdated  bool              `json:"outdated"`
+	Comments  []commentResponse `json:"comments"`
+}
+
+// fileAnnotations converts one file's threads into the shape clients receive,
+// keyed by line number.
+func fileAnnotations(threads map[int]*store.Thread) map[string]annotationResponse {
+	result := make(map[string]annotationResponse, len(threads))
+	for line, thread := range threads {
+		live := thread.Live()
+		comments := make([]commentResponse, 0, len(live))
+		for _, c := range live {
+			comments = append(comments, commentResponse{
+				ID:         c.ID,
+				ReplyTo:    c.ReplyTo,
+				Comment:    c.Comment,
+				Suggestion: c.Suggestion,
+			})
+		}
 		result[strconv.Itoa(line)] = annotationResponse{
-			Comment:   ann.Comment,
-			StartLine: ann.StartFor(line),
+			StartLine: thread.StartFor(line),
 			EndLine:   line,
-			Outdated:  ann.Outdated,
+			Outdated:  thread.Outdated,
+			Comments:  comments,
 		}
 	}
 	return result
 }
 
-// allAnnotations converts the annotations of every file into the shape clients
+// allAnnotations converts the threads of every file into the shape clients
 // receive, keyed by file path.
-func allAnnotations(all map[string]map[int]*store.Annotation) map[string]map[string]annotationResponse {
+func allAnnotations(all map[string]map[int]*store.Thread) map[string]map[string]annotationResponse {
 	result := make(map[string]map[string]annotationResponse, len(all))
-	for file, lines := range all {
-		result[file] = fileAnnotations(lines)
+	for file, threads := range all {
+		result[file] = fileAnnotations(threads)
 	}
 	return result
 }
@@ -227,10 +256,13 @@ func (h *handlers) handleGetAnnotations(w http.ResponseWriter, r *http.Request) 
 }
 
 type annotationRequest struct {
-	Path    string       `json:"path"`
-	Line    int          `json:"line"`
-	Range   *rangeEntity `json:"range,omitempty"`
-	Comment string       `json:"comment"`
+	Path       string       `json:"path"`
+	Line       int          `json:"line"`
+	Range      *rangeEntity `json:"range,omitempty"`
+	Comment    string       `json:"comment"`
+	Suggestion string       `json:"suggestion,omitempty"`
+	ReplyTo    int64        `json:"replyTo,omitempty"`
+	ID         int64        `json:"id,omitempty"` // the comment to delete
 }
 
 // rangeEntity mirrors the fields of Gerrit's CommentRange that a whole-line
@@ -277,17 +309,18 @@ func (h *handlers) handleSetAnnotation(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Comment) == "" {
-		jsonError(w, "comment cannot be empty", http.StatusBadRequest)
+	if strings.TrimSpace(req.Comment) == "" && strings.TrimSpace(req.Suggestion) == "" {
+		jsonError(w, "a comment or a suggested change is required", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.store.Set(req.Path, start, end, req.Comment); err != nil {
+	id, err := h.store.AppendComment(req.Path, start, end, req.ReplyTo, req.Comment, req.Suggestion)
+	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to save: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	jsonResponse(w, map[string]string{"status": "ok"})
+	jsonResponse(w, map[string]any{"status": "ok", "id": id})
 }
 
 func (h *handlers) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request) {
@@ -297,9 +330,8 @@ func (h *handlers) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	_, end, ok := req.lineRange()
-	if req.Path == "" || !ok {
-		jsonError(w, "path and line (>= 1) are required", http.StatusBadRequest)
+	if req.Path == "" || req.ID <= 0 {
+		jsonError(w, "path and the id of the comment are required", http.StatusBadRequest)
 		return
 	}
 	if _, ok := h.resolvePath(req.Path); !ok {
@@ -307,7 +339,7 @@ func (h *handlers) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.store.Delete(req.Path, end); err != nil {
+	if err := h.store.DeleteComment(req.Path, req.ID); err != nil {
 		jsonError(w, fmt.Sprintf("failed to delete: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -318,6 +350,7 @@ func (h *handlers) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request
 // configResponse is the JSON shape for the review's global settings.
 type configResponse struct {
 	Base           string `json:"base"`                  // revision changes are compared against, empty when comparing against HEAD
+	BaseShort      string `json:"baseShort,omitempty"`   // that revision abbreviated, as git prints it
 	HistoryEnabled bool   `json:"historyEnabled"`        // whether starting a new review archives the old one instead of deleting it
 	HistoryDest    string `json:"historyDest,omitempty"` // where the current review would be archived, relative to the review root
 	SideBySide     bool   `json:"sideBySide"`            // whether the side-by-side view is available
@@ -326,6 +359,7 @@ type configResponse struct {
 func (h *handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 	resp := configResponse{
 		Base:           h.base.Rev,
+		BaseShort:      h.base.Short(h.rootDir),
 		HistoryEnabled: h.store.HistoryEnabled(),
 		SideBySide:     h.sideBySide,
 	}

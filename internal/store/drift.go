@@ -72,59 +72,59 @@ func (s *Store) checkDrift(filePath string) bool {
 	type relocation struct {
 		oldLine int
 		newLine int
-		ann     *Annotation
+		thread  *Thread
 	}
 	var relocations []relocation
 
-	for lineNum, ann := range annotations {
-		start := ann.StartFor(lineNum)
-		if len(ann.Context) == 0 {
+	for lineNum, thread := range annotations {
+		start := thread.StartFor(lineNum)
+		if len(thread.Context) == 0 {
 			// Nothing recorded to compare against, as in files written before
 			// the context was stored: adopt the current source as reference.
 			if ctx, from := contextAroundRange(fileLines, start, lineNum, ContextRadius); len(ctx) > 0 {
-				ann.Context, ann.ContextFrom = ctx, from
-				ann.StartLine = start
+				thread.Context, thread.ContextFrom = ctx, from
+				thread.StartLine = start
 				changed = true
 			}
 			continue
 		}
 
 		// Check if context still matches at stored position
-		if contextMatchesAt(fileLines, ann.Context, ann.ContextFrom) {
+		if contextMatchesAt(fileLines, thread.Context, thread.ContextFrom) {
 			// Context is in the same place — clear outdated if it was set
-			if ann.Outdated {
-				ann.Outdated = false
+			if thread.Outdated {
+				thread.Outdated = false
 				changed = true
 			}
 			continue
 		}
 
 		// Context doesn't match at stored position — try to find it elsewhere
-		newFrom := findContext(fileLines, ann.Context, ann.ContextFrom)
+		newFrom := findContext(fileLines, thread.Context, thread.ContextFrom)
 		if newFrom > 0 {
 			// Found at a new position — relocate
-			delta := newFrom - ann.ContextFrom
+			delta := newFrom - thread.ContextFrom
 			newLine := lineNum + delta
 			if newLine >= 1 {
-				ann.ContextFrom = newFrom
-				ann.StartLine += delta
-				if ann.StartLine < 1 {
-					ann.StartLine = newLine
+				thread.ContextFrom = newFrom
+				thread.StartLine += delta
+				if thread.StartLine < 1 {
+					thread.StartLine = newLine
 				}
-				ann.Outdated = false
+				thread.Outdated = false
 				if newLine != lineNum {
 					relocations = append(relocations, relocation{
 						oldLine: lineNum,
 						newLine: newLine,
-						ann:     ann,
+						thread:  thread,
 					})
 				}
 				changed = true
 			}
 		} else {
 			// Context not found anywhere — mark as outdated
-			if !ann.Outdated {
-				ann.Outdated = true
+			if !thread.Outdated {
+				thread.Outdated = true
 				changed = true
 			}
 		}
@@ -133,7 +133,7 @@ func (s *Store) checkDrift(filePath string) bool {
 	// Apply relocations (change map keys)
 	for _, r := range relocations {
 		delete(annotations, r.oldLine)
-		annotations[r.newLine] = r.ann
+		annotations[r.newLine] = r.thread
 	}
 
 	return changed

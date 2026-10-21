@@ -28,10 +28,16 @@ type ReviewInfo struct {
 // that a generated or minified file is still read to the end.
 const maxLineLength = 1 << 20
 
-// serialize converts the annotation map to a markdown string. The context
-// blocks are written from the context stored with each annotation, which is
-// the code as it looked when the annotation was last in sync with the source.
-func serialize(data map[string]map[int]*Annotation, started string, info ReviewInfo) string {
+// serialize converts the thread map to a markdown string. The context blocks
+// are written from the context stored with each thread, which is the code as it
+// looked when the thread was last in sync with the source.
+//
+// The file is append-only in the sense that matters: a thread reads downwards
+// in the order its comments were written, each heading naming the id of the
+// comment under it, and a reply naming the comment it answers. A comment is
+// never rewritten in place, so a comment that was deleted is left as a
+// tombstone until the next purge takes it — and its answers — out.
+func serialize(data map[string]map[int]*Thread, started string, info ReviewInfo) string {
 	var b strings.Builder
 
 	b.WriteString("# Code Review\n\n")
@@ -48,16 +54,16 @@ func serialize(data map[string]map[int]*Annotation, started string, info ReviewI
 
 	// Sort file paths
 	paths := make([]string, 0, len(data))
-	for p, lines := range data {
-		if len(lines) > 0 {
+	for p, threads := range data {
+		if len(threads) > 0 {
 			paths = append(paths, p)
 		}
 	}
 	sort.Strings(paths)
 
 	for _, filePath := range paths {
-		lines := data[filePath]
-		if len(lines) == 0 {
+		threads := data[filePath]
+		if len(threads) == 0 {
 			continue
 		}
 
@@ -65,21 +71,44 @@ func serialize(data map[string]map[int]*Annotation, started string, info ReviewI
 		b.WriteString(fmt.Sprintf("## `%s`\n", filePath))
 
 		// Sort line numbers
-		lineNums := make([]int, 0, len(lines))
-		for n := range lines {
+		lineNums := make([]int, 0, len(threads))
+		for n := range threads {
 			lineNums = append(lineNums, n)
 		}
 		sort.Ints(lineNums)
 
 		for _, lineNum := range lineNums {
-			ann := lines[lineNum]
-			b.WriteString("\n#### " + lineHeader(ann, lineNum) + "\n\n")
-			b.WriteString(escapeComment(ann.Comment))
-
-			if len(ann.Context) > 0 {
-				b.WriteString(fmt.Sprintf("\n```%s\n", contextFenceInfo(filePath)))
-				b.WriteString(formatContext(ann.Context, ann.ContextFrom))
-				b.WriteString("```\n")
+			thread := threads[lineNum]
+			for i, c := range thread.Comments {
+				b.WriteString("\n#### " + lineHeader(thread, lineNum, c) + "\n\n")
+				if c.ReplyTo != 0 {
+					b.WriteString(fmt.Sprintf("_In reply to: %d_\n\n", c.ReplyTo))
+				}
+				wroteBlock := false
+				if c.Comment != "" {
+					b.WriteString(escapeComment(c.Comment))
+					wroteBlock = true
+				}
+				if c.Suggestion != "" {
+					if wroteBlock {
+						b.WriteString("\n")
+					}
+					b.WriteString("```" + suggestionMarker + "\n")
+					b.WriteString(c.Suggestion + "\n")
+					b.WriteString("```\n")
+					wroteBlock = true
+				}
+				// The context belongs to the thread, so it is written once,
+				// under the comment the thread began with: the code the review
+				// was taken against is what the first comment was made about.
+				if i == 0 && len(thread.Context) > 0 {
+					if wroteBlock {
+						b.WriteString("\n")
+					}
+					b.WriteString(fmt.Sprintf("```%s\n", contextFenceInfo(filePath)))
+					b.WriteString(formatContext(thread.Context, thread.ContextFrom))
+					b.WriteString("```\n")
+				}
 			}
 		}
 	}
@@ -87,16 +116,20 @@ func serialize(data map[string]map[int]*Annotation, started string, info ReviewI
 	return b.String()
 }
 
-// lineHeader renders the heading text naming the lines an annotation covers,
-// without the heading's own hashes. A comment on a range names its first and
-// last line; a single-line one keeps the "Line N" form, so a review file
-// written before ranges existed still reads the same.
-func lineHeader(ann *Annotation, endLine int) string {
+// lineHeader renders the heading text naming the lines a comment covers and the
+// comment itself, without the heading's own hashes. A comment on a range names
+// its first and last line; a single-line one keeps the "Line N" form, so a
+// review file written before ranges existed still reads the same.
+func lineHeader(thread *Thread, endLine int, c *Comment) string {
 	header := fmt.Sprintf("Line %d", endLine)
-	if ann.StartLine > 0 && ann.StartLine != endLine {
-		header = fmt.Sprintf("Lines %d-%d", ann.StartLine, endLine)
+	if start := thread.StartFor(endLine); start != endLine {
+		header = fmt.Sprintf("Lines %d-%d", start, endLine)
 	}
-	if ann.Outdated {
+	header += fmt.Sprintf(" @%d", c.ID)
+	if c.Deleted {
+		header += " (deleted)"
+	}
+	if thread.Outdated {
 		header += " (outdated)"
 	}
 	return header

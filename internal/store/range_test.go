@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -20,7 +21,7 @@ func TestRange_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("a.go", 3, 6, "this whole block needs work"); err != nil {
+	if _, err := st.AppendComment("a.go", 3, 6, 0, "this whole block needs work", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -37,7 +38,7 @@ func TestRange_RoundTrip(t *testing.T) {
 	}
 
 	written := mustRead(t, mdPath)
-	if !strings.Contains(written, "#### Lines 3-6\n") {
+	if !regexp.MustCompile(`#### Lines 3-6 @\d+\n`).MatchString(written) {
 		t.Errorf("expected a range heading, file is:\n%s", written)
 	}
 
@@ -49,7 +50,7 @@ func TestRange_RoundTrip(t *testing.T) {
 	if got == nil {
 		t.Fatalf("annotation lost, file was:\n%s", mustRead(t, mdPath))
 	}
-	if got.StartLine != 3 || got.Comment != "this whole block needs work" {
+	if got.StartLine != 3 || firstComment(got) != "this whole block needs work" {
 		t.Errorf("range did not survive: %+v", got)
 	}
 }
@@ -62,10 +63,10 @@ func TestRange_SingleLineUnchanged(t *testing.T) {
 	mdPath := filepath.Join(dir, "REVIEW.md")
 
 	st, _ := Load(mdPath, dir)
-	st.Set("a.go", 2, 2, "a note")
+	st.AppendComment("a.go", 2, 2, 0, "a note", "")
 
 	written := mustRead(t, mdPath)
-	if !strings.Contains(written, "#### Line 2\n") || strings.Contains(written, "Lines ") {
+	if !regexp.MustCompile(`#### Line 2 @\d+\n`).MatchString(written) || strings.Contains(written, "Lines ") {
 		t.Errorf("single-line comment should keep the Line heading, file is:\n%s", written)
 	}
 }
@@ -81,12 +82,14 @@ func TestRange_DriftFollowsBothEnds(t *testing.T) {
 	st, _ := Load(mdPath, dir)
 	// Context as it looked before the insertion, covering lines 1-7 of the
 	// original file.
-	st.data["a.go"] = map[int]*Annotation{
+	st.data["a.go"] = map[int]*Thread{
 		6: {
-			Comment:     "block",
 			StartLine:   3,
 			Context:     []string{"l1", "l2", "l3", "l4", "l5", "l6", "l7"},
 			ContextFrom: 1,
+			Comments: []*Comment{
+				{Comment: "block"},
+			},
 		},
 	}
 

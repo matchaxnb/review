@@ -20,7 +20,7 @@ func TestReviewInfoWrittenAndRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.SetBase("abc1234 (main) — first line of the commit [dirty changeset]")
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +53,7 @@ func TestReviewCreatedTimePreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("a.go", 2, 2, "first"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "first", ""); err != nil {
 		t.Fatal(err)
 	}
 	first, err := parse(mdPath)
@@ -62,7 +62,7 @@ func TestReviewCreatedTimePreserved(t *testing.T) {
 	}
 
 	time.Sleep(1100 * time.Millisecond)
-	if err := st.Set("a.go", 3, 3, "second"); err != nil {
+	if _, err := st.AppendComment("a.go", 3, 3, 0, "second", ""); err != nil {
 		t.Fatal(err)
 	}
 	second, err := parse(mdPath)
@@ -90,7 +90,7 @@ func TestReviewBaseUpdatedWhenChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.SetBase("old base")
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,7 +101,7 @@ func TestReviewBaseUpdatedWhenChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloaded.SetBase("new base")
-	if err := reloaded.Set("a.go", 3, 3, "another comment"); err != nil {
+	if _, err := reloaded.AppendComment("a.go", 3, 3, 0, "another comment", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,7 +127,7 @@ func TestReviewBaseKeptAcrossReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.SetBase("recorded base")
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -140,7 +140,7 @@ func TestReviewBaseKeptAcrossReload(t *testing.T) {
 	if _, err := other.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if err := other.Set("a.go", 3, 3, "another comment"); err != nil {
+	if _, err := other.AppendComment("a.go", 3, 3, 0, "another comment", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -166,13 +166,13 @@ func TestReviewBaseKeptAcrossNewReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.SetBase("a base")
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.ArchiveReview(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set("a.go", 3, 3, "after the new review"); err != nil {
+	if _, err := st.AppendComment("a.go", 3, 3, 0, "after the new review", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -197,7 +197,7 @@ func TestReviewInfoAbsentLeftOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A write always stamps the times, so they are present; the base is not set.
-	if err := st.Set("a.go", 2, 2, "a comment"); err != nil {
+	if _, err := st.AppendComment("a.go", 2, 2, 0, "a comment", ""); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(mdPath)

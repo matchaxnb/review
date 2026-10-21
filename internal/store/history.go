@@ -80,7 +80,7 @@ func (s *Store) archiveLocked() (dest string, retired bool, err error) {
 // base is kept: it belongs to the invocation, not to the review file, so a new
 // review is still made against the same point in history.
 func (s *Store) reset() {
-	s.data = make(map[string]map[int]*Annotation)
+	s.data = make(map[string]map[int]*Thread)
 	s.started = ""
 	s.created = ""
 	s.modified = ""
